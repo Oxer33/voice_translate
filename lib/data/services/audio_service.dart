@@ -67,8 +67,8 @@ class AudioService {
   Future<void> startRecording({
     required CountdownCallback onCountdown,
     required AmplitudeCallback onAmplitude,
-    required VoidCallback onSilenceDetected,
-    required VoidCallback onMaxDurationReached,
+    required OnVoidAction onSilenceDetected,
+    required OnVoidAction onMaxDurationReached,
     double silenceSensitivity = kDefaultSilenceSensitivity,
   }) async {
     if (_isRecording) {
@@ -259,5 +259,5 @@ class AudioService {
   }
 }
 
-/// Typedef per VoidCallback (evita import di flutter)
-typedef VoidCallback = void Function();
+/// Tipo callback senza parametri (evita import di flutter nel data layer)
+typedef OnVoidAction = void Function();

@@ -4,6 +4,7 @@ library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:voice_translate/core/utils/logger.dart';
+import 'package:voice_translate/data/repositories/history_repository.dart';
 import 'package:voice_translate/domain/entities/translation_entry.dart';
 import 'package:voice_translate/presentation/providers/app_providers.dart';
 
@@ -19,7 +20,7 @@ final historyListProvider =
 
 /// Notifier per la gestione della lista cronologia
 class HistoryListNotifier extends StateNotifier<List<TranslationEntry>> {
-  final dynamic _repo;
+  final HistoryRepository _repo;
 
   HistoryListNotifier(this._repo) : super([]);
 
