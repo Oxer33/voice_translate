@@ -1,0 +1,67 @@
+name: voice_translate
+description: "App di trascrizione e traduzione vocale completamente offline"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Gestione stato
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # Navigazione
+  go_router: ^14.8.1
+
+  # Data classes
+  freezed_annotation: ^3.0.0
+  json_annotation: ^4.9.0
+
+  # Storage locale
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # Percorsi file
+  path_provider: ^2.1.5
+  path: ^1.9.1
+
+  # Permessi
+  permission_handler: ^11.4.0
+
+  # Audio recording
+  record: ^5.2.0
+
+  # HTTP per download modelli
+  dio: ^5.7.0
+
+  # FFI per binding nativi
+  ffi: ^2.1.3
+
+  # Utility
+  crypto: ^3.0.6
+  intl: ^0.20.2
+  shared_preferences: ^2.5.3
+  connectivity_plus: ^6.1.4
+  workmanager: ^0.5.2
+  uuid: ^4.5.1
+  flutter_animate: ^4.5.2
+  google_fonts: ^6.2.1
+  device_info_plus: ^11.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  build_runner: ^2.4.14
+  freezed: ^3.0.0
+  json_serializable: ^6.9.4
+  riverpod_generator: ^2.6.4
+  custom_lint: ^0.7.5
+  riverpod_lint: ^2.6.4
+
+flutter:
+  uses-material-design: true
