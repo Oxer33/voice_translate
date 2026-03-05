@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:voice_translate/core/constants/languages.dart';
+import 'package:voice_translate/core/constants/model_config.dart';
 import 'package:voice_translate/core/utils/logger.dart';
 import 'package:voice_translate/data/datasources/onnx_ffi.dart';
 import 'package:voice_translate/data/datasources/whisper_ffi.dart';
@@ -60,6 +61,9 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
   /// Se lo streaming e' attivo
   bool _streamingActive = false;
 
+  /// ID del modello Whisper selezionato
+  String _selectedWhisperModelId = kDefaultWhisperModelId;
+
   PipelineNotifier({
     required AudioService audioService,
     required DownloadService downloadService,
@@ -96,6 +100,12 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
 
   /// Getter per lingua target corrente
   SupportedLanguage get targetLanguage => _targetLanguage;
+
+  /// Imposta il modello Whisper da usare
+  void setWhisperModel(String modelId) {
+    AppLogger.info(_tag, 'Modello Whisper: $modelId');
+    _selectedWhisperModelId = modelId;
+  }
 
   /// Avvia lo streaming live (ascolto continuo + trascrizione + traduzione)
   Future<void> startStreaming() async {
@@ -221,7 +231,10 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
       }
 
       final modelsPath = await _downloadService.getModelsBasePath();
-      final whisperModelPath = '$modelsPath/whisper/ggml-medium.bin';
+      // Usa il modello Whisper selezionato dall'utente
+      final whisperModel = findWhisperModelById(_selectedWhisperModelId);
+      final whisperFileName = whisperModel?.fileConfig.fileName ?? 'ggml-small.bin';
+      final whisperModelPath = '$modelsPath/whisper/$whisperFileName';
 
       final langCode = _sourceLanguage.nllbCode == 'auto'
           ? null

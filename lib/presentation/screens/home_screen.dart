@@ -66,6 +66,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final mode =
         settings.lastMode == 'speech' ? AppMode.speech : AppMode.text;
     pipeline.setMode(mode);
+
+    // Ripristina modello Whisper selezionato
+    pipeline.setWhisperModel(settings.selectedWhisperModelId);
   }
 
   /// Gestisce la pressione del pulsante streaming

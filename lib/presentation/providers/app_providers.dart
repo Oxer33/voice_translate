@@ -68,6 +68,7 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
     String? lastTargetLanguageCode,
     String? lastMode,
     double? ttsSpeed,
+    String? selectedWhisperModelId,
   }) async {
     state = await _repo.update(
       showTranscription: showTranscription,
@@ -76,6 +77,7 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
       lastTargetLanguageCode: lastTargetLanguageCode,
       lastMode: lastMode,
       ttsSpeed: ttsSpeed,
+      selectedWhisperModelId: selectedWhisperModelId,
     );
   }
 }

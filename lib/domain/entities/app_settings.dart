@@ -22,6 +22,9 @@ class AppSettings {
   /// Velocità TTS per la modalità parlato (0.0 - 2.0, default 1.0)
   final double ttsSpeed;
 
+  /// ID del modello Whisper selezionato ('tiny', 'small', 'medium')
+  final String selectedWhisperModelId;
+
   const AppSettings({
     this.showTranscription = true,
     this.silenceSensitivity = 0.03,
@@ -29,6 +32,7 @@ class AppSettings {
     this.lastTargetLanguageCode = 'eng_Latn',
     this.lastMode = 'text',
     this.ttsSpeed = 1.0,
+    this.selectedWhisperModelId = 'small',
   });
 
   /// Crea una copia con i campi modificati
@@ -39,6 +43,7 @@ class AppSettings {
     String? lastTargetLanguageCode,
     String? lastMode,
     double? ttsSpeed,
+    String? selectedWhisperModelId,
   }) =>
       AppSettings(
         showTranscription: showTranscription ?? this.showTranscription,
@@ -49,6 +54,8 @@ class AppSettings {
             lastTargetLanguageCode ?? this.lastTargetLanguageCode,
         lastMode: lastMode ?? this.lastMode,
         ttsSpeed: ttsSpeed ?? this.ttsSpeed,
+        selectedWhisperModelId:
+            selectedWhisperModelId ?? this.selectedWhisperModelId,
       );
 
   /// Serializza in Map per SharedPreferences
@@ -59,6 +66,7 @@ class AppSettings {
         'lastTargetLanguageCode': lastTargetLanguageCode,
         'lastMode': lastMode,
         'ttsSpeed': ttsSpeed,
+        'selectedWhisperModelId': selectedWhisperModelId,
       };
 
   /// Deserializza da Map
@@ -71,6 +79,8 @@ class AppSettings {
             map['lastTargetLanguageCode'] as String? ?? 'eng_Latn',
         lastMode: map['lastMode'] as String? ?? 'text',
         ttsSpeed: map['ttsSpeed'] as double? ?? 1.0,
+        selectedWhisperModelId:
+            map['selectedWhisperModelId'] as String? ?? 'small',
       );
 
   @override
@@ -80,5 +90,6 @@ class AppSettings {
       'src: $lastSourceLanguageCode, '
       'tgt: $lastTargetLanguageCode, '
       'mode: $lastMode, '
-      'ttsSpeed: $ttsSpeed)';
+      'ttsSpeed: $ttsSpeed, '
+      'whisper: $selectedWhisperModelId)';
 }

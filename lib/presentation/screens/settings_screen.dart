@@ -176,11 +176,120 @@ class SettingsScreen extends ConsumerWidget {
 
           const SizedBox(height: 8),
 
-          // ========== SEZIONE: MODELLI ==========
-          _buildSectionHeader(theme, 'Modelli IA'),
+          // ========== SEZIONE: MODELLO WHISPER ==========
+          _buildSectionHeader(theme, 'Modello Trascrizione (Whisper)'),
 
-          ...List.generate(kModelFiles.length, (index) {
-            final config = kModelFiles[index];
+          // Selezione modello Whisper con card selezionabili
+          ...kWhisperModels.map((whisperModel) {
+            final isSelected =
+                settings.selectedWhisperModelId == whisperModel.id;
+            return Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+              child: Card(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: isSelected
+                      ? const BorderSide(color: AppColors.primaryBlue, width: 2)
+                      : BorderSide.none,
+                ),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () {
+                    settingsNotifier.update(
+                        selectedWhisperModelId: whisperModel.id);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        // Icona selezione
+                        Icon(
+                          isSelected
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_unchecked,
+                          color: isSelected
+                              ? AppColors.primaryBlue
+                              : theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.3),
+                        ),
+                        const SizedBox(width: 12),
+                        // Info modello
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                whisperModel.displayName,
+                                style: theme.textTheme.bodyLarge?.copyWith(
+                                  fontWeight: isSelected
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                  color: isSelected
+                                      ? AppColors.primaryBlue
+                                      : null,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                whisperModel.description,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface
+                                      .withValues(alpha: 0.5),
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              // Rating velocita'/accuratezza
+                              Row(
+                                children: [
+                                  Text('Velocita\' ',
+                                      style: theme.textTheme.labelSmall),
+                                  ...List.generate(
+                                      3,
+                                      (i) => Icon(
+                                            Icons.bolt,
+                                            size: 14,
+                                            color: i < whisperModel.speedRating
+                                                ? AppColors.warning
+                                                : theme
+                                                    .colorScheme.onSurface
+                                                    .withValues(alpha: 0.15),
+                                          )),
+                                  const SizedBox(width: 12),
+                                  Text('Accuratezza ',
+                                      style: theme.textTheme.labelSmall),
+                                  ...List.generate(
+                                      3,
+                                      (i) => Icon(
+                                            Icons.star,
+                                            size: 14,
+                                            color: i <
+                                                    whisperModel.accuracyRating
+                                                ? AppColors.primaryBlue
+                                                : theme
+                                                    .colorScheme.onSurface
+                                                    .withValues(alpha: 0.15),
+                                          )),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+
+          const SizedBox(height: 8),
+
+          // ========== SEZIONE: MODELLI TRADUZIONE ==========
+          _buildSectionHeader(theme, 'Modelli Traduzione (NLLB-200)'),
+
+          ...List.generate(kNllbModelFiles.length, (index) {
+            final config = kNllbModelFiles[index];
             return Padding(
               padding:
                   const EdgeInsets.symmetric(horizontal: 16, vertical: 4),

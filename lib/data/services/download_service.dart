@@ -51,17 +51,17 @@ class DownloadService {
   DownloadService() {
     _dio = Dio(BaseOptions(
       connectTimeout: Duration(seconds: kDownloadConnectTimeoutSec),
-      receiveTimeout: Duration(seconds: kDownloadReceiveTimeoutSec),
+      // NESSUN receiveTimeout: lo streaming puo' durare ore per file grandi
+      // Il timeout per singolo chunk e' gestito dal server
+      receiveTimeout: const Duration(minutes: 30),
       headers: {
         'User-Agent': 'VoiceTranslate/2.0',
-        // Necessario per Hugging Face
         'Accept': '*/*',
       },
-      // IMPORTANTE: non seguire redirect automatici per gestire manualmente
       followRedirects: true,
-      maxRedirects: 5,
+      maxRedirects: 10,
     ));
-    AppLogger.info(_tag, 'DownloadService inizializzato (resume robusto)');
+    AppLogger.info(_tag, 'DownloadService inizializzato (resume robusto v2)');
   }
 
   /// Ottiene la cartella base per i modelli
