@@ -1,4 +1,4 @@
-/// Widget indicatore della fase corrente della pipeline.
+/// Widget indicatore della fase corrente della pipeline streaming.
 /// Mostra spinner e nome della fase in corso.
 library;
 
@@ -25,7 +25,6 @@ class PhaseIndicator extends StatelessWidget {
 
     final theme = Theme.of(context);
     final isProcessing = phase == PipelinePhase.transcribing ||
-        phase == PipelinePhase.correcting ||
         phase == PipelinePhase.translating;
 
     return AnimatedContainer(
@@ -33,10 +32,10 @@ class PhaseIndicator extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color: _getBackgroundColor(theme).withValues(alpha: 0.1),
+        color: _getColor(theme).withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: _getBackgroundColor(theme).withValues(alpha: 0.3),
+          color: _getColor(theme).withValues(alpha: 0.3),
         ),
       ),
       child: Row(
@@ -44,14 +43,14 @@ class PhaseIndicator extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           // Spinner o icona stato
-          if (isProcessing)
+          if (isProcessing || phase == PipelinePhase.listening)
             SizedBox(
               width: 20,
               height: 20,
               child: CircularProgressIndicator(
                 strokeWidth: 2.5,
                 valueColor: AlwaysStoppedAnimation<Color>(
-                  _getBackgroundColor(theme),
+                  _getColor(theme),
                 ),
               ),
             )
@@ -59,7 +58,7 @@ class PhaseIndicator extends StatelessWidget {
             Icon(
               _getIcon(),
               size: 20,
-              color: _getBackgroundColor(theme),
+              color: _getColor(theme),
             ),
 
           const SizedBox(width: 12),
@@ -68,7 +67,7 @@ class PhaseIndicator extends StatelessWidget {
           Text(
             phaseDisplayName(phase),
             style: theme.textTheme.bodyMedium?.copyWith(
-              color: _getBackgroundColor(theme),
+              color: _getColor(theme),
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -77,17 +76,16 @@ class PhaseIndicator extends StatelessWidget {
     );
   }
 
-  /// Colore di sfondo in base alla fase
-  Color _getBackgroundColor(ThemeData theme) {
+  /// Colore in base alla fase
+  Color _getColor(ThemeData theme) {
     switch (phase) {
-      case PipelinePhase.recording:
-        return AppColors.error;
+      case PipelinePhase.listening:
+        return AppColors.success;
       case PipelinePhase.transcribing:
-      case PipelinePhase.correcting:
       case PipelinePhase.translating:
         return AppColors.primaryBlue;
-      case PipelinePhase.completed:
-        return AppColors.success;
+      case PipelinePhase.speaking:
+        return AppColors.info;
       case PipelinePhase.error:
         return AppColors.error;
       default:
@@ -98,10 +96,10 @@ class PhaseIndicator extends StatelessWidget {
   /// Icona in base alla fase
   IconData _getIcon() {
     switch (phase) {
-      case PipelinePhase.recording:
-        return Icons.fiber_manual_record;
-      case PipelinePhase.completed:
-        return Icons.check_circle;
+      case PipelinePhase.listening:
+        return Icons.hearing;
+      case PipelinePhase.speaking:
+        return Icons.volume_up;
       case PipelinePhase.error:
         return Icons.error;
       default:

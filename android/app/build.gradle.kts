@@ -9,8 +9,8 @@ android {
     namespace = "com.voicetranslate.voice_translate"
     compileSdk = flutter.compileSdkVersion
 
-    // NDK versione 25+ per compilazione librerie native (whisper.cpp, llama.cpp)
-    ndkVersion = "25.2.9519653"
+    // NDK versione 27 per compatibilità con plugin (whisper.cpp, llama.cpp)
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

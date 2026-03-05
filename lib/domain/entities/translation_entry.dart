@@ -25,9 +25,6 @@ class TranslationEntry {
   /// Testo trascritto grezzo (output Whisper)
   final String rawText;
 
-  /// Testo corretto (output Phi-3), può essere null se correzione disabilitata
-  final String? correctedText;
-
   /// Testo tradotto (output NLLB)
   final String translatedText;
 
@@ -39,7 +36,6 @@ class TranslationEntry {
     required this.sourceLanguageName,
     required this.targetLanguageName,
     required this.rawText,
-    this.correctedText,
     required this.translatedText,
   });
 
@@ -52,7 +48,6 @@ class TranslationEntry {
         'sourceLanguageName': sourceLanguageName,
         'targetLanguageName': targetLanguageName,
         'rawText': rawText,
-        'correctedText': correctedText,
         'translatedText': translatedText,
       };
 
@@ -66,7 +61,6 @@ class TranslationEntry {
         sourceLanguageName: map['sourceLanguageName'] as String,
         targetLanguageName: map['targetLanguageName'] as String,
         rawText: map['rawText'] as String,
-        correctedText: map['correctedText'] as String?,
         translatedText: map['translatedText'] as String,
       );
 

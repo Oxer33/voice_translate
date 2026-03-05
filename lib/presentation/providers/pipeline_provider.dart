@@ -1,5 +1,6 @@
-/// Provider per la pipeline di elaborazione vocale.
-/// Coordina registrazione -> trascrizione -> correzione -> traduzione.
+/// Provider per la pipeline di elaborazione vocale streaming.
+/// Coordina il flusso live: ascolto continuo -> trascrizione chunk -> traduzione -> TTS.
+/// Supporta due modalità: TEXT (sottotitoli a schermo) e SPEECH (traduzione parlata).
 library;
 
 import 'dart:async';
@@ -9,12 +10,12 @@ import 'package:uuid/uuid.dart';
 
 import 'package:voice_translate/core/constants/languages.dart';
 import 'package:voice_translate/core/utils/logger.dart';
-import 'package:voice_translate/data/datasources/llama_ffi.dart';
 import 'package:voice_translate/data/datasources/onnx_ffi.dart';
 import 'package:voice_translate/data/datasources/whisper_ffi.dart';
 import 'package:voice_translate/data/repositories/history_repository.dart';
 import 'package:voice_translate/data/services/audio_service.dart';
 import 'package:voice_translate/data/services/download_service.dart';
+import 'package:voice_translate/data/services/tts_service.dart';
 import 'package:voice_translate/domain/entities/pipeline_state.dart';
 import 'package:voice_translate/domain/entities/translation_entry.dart';
 import 'package:voice_translate/presentation/providers/app_providers.dart';
@@ -25,42 +26,50 @@ const String _tag = 'PipelineProvider';
 /// UUID generator
 const _uuid = Uuid();
 
-/// Provider per lo stato della pipeline
+/// Provider per lo stato della pipeline streaming
 final pipelineStateProvider =
     StateNotifierProvider<PipelineNotifier, PipelineState>((ref) {
   final audioService = ref.watch(audioServiceProvider);
   final downloadService = ref.watch(downloadServiceProvider);
+  final ttsService = ref.watch(ttsServiceProvider);
   final historyRepo = ref.watch(historyRepositoryProvider);
-  final settings = ref.watch(appSettingsProvider);
   return PipelineNotifier(
     audioService: audioService,
     downloadService: downloadService,
+    ttsService: ttsService,
     historyRepository: historyRepo,
-    correctionEnabled: settings.correctionEnabled,
   );
 });
 
-/// Notifier per la gestione della pipeline di elaborazione
+/// Notifier per la gestione della pipeline streaming
 class PipelineNotifier extends StateNotifier<PipelineState> {
   final AudioService _audioService;
   final DownloadService _downloadService;
+  final TtsService _ttsService;
   final HistoryRepository _historyRepository;
 
   /// Lingua sorgente selezionata
   SupportedLanguage _sourceLanguage = kAutoDetectLanguage;
 
   /// Lingua target selezionata
-  SupportedLanguage _targetLanguage = kSupportedLanguages[1]; // Inglese default
+  SupportedLanguage _targetLanguage = kSupportedLanguages[1]; // Inglese
+
+  /// Timer per il chunk streaming
+  Timer? _chunkTimer;
+
+  /// Se lo streaming e' attivo
+  bool _streamingActive = false;
 
   PipelineNotifier({
     required AudioService audioService,
     required DownloadService downloadService,
+    required TtsService ttsService,
     required HistoryRepository historyRepository,
-    required bool correctionEnabled,
   })  : _audioService = audioService,
         _downloadService = downloadService,
+        _ttsService = ttsService,
         _historyRepository = historyRepository,
-        super(PipelineState.initial(correctionEnabled: correctionEnabled));
+        super(PipelineState.initial());
 
   /// Imposta la lingua sorgente
   void setSourceLanguage(SupportedLanguage lang) {
@@ -72,12 +81,14 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
   void setTargetLanguage(SupportedLanguage lang) {
     AppLogger.info(_tag, 'Lingua target: ${lang.nameIt}');
     _targetLanguage = lang;
+    // Aggiorna anche la lingua TTS
+    _ttsService.setLanguage(lang.nllbCode);
   }
 
-  /// Abilita/disabilita la correzione
-  void setCorrectionEnabled(bool enabled) {
-    AppLogger.info(_tag, 'Correzione: $enabled');
-    state = state.copyWith(correctionEnabled: enabled);
+  /// Cambia la modalita' dell'app (TEXT o SPEECH)
+  void setMode(AppMode mode) {
+    AppLogger.info(_tag, 'Modalita\' cambiata: ${modeDisplayName(mode)}');
+    state = state.copyWith(mode: mode);
   }
 
   /// Getter per lingua sorgente corrente
@@ -86,190 +97,258 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
   /// Getter per lingua target corrente
   SupportedLanguage get targetLanguage => _targetLanguage;
 
-  /// Avvia la registrazione audio
-  Future<void> startRecording() async {
-    AppLogger.info(_tag, 'Avvio registrazione...');
-    state = PipelineState.initial(
-        correctionEnabled: state.correctionEnabled)
-      .copyWith(phase: PipelinePhase.recording);
+  /// Avvia lo streaming live (ascolto continuo + trascrizione + traduzione)
+  Future<void> startStreaming() async {
+    if (_streamingActive) {
+      AppLogger.warning(_tag, 'Streaming gia\' attivo');
+      return;
+    }
+
+    AppLogger.info(_tag, 'Avvio streaming live...');
+
+    // Inizializza TTS per la modalita' speech
+    if (state.mode == AppMode.speech) {
+      await _ttsService.init(
+        languageCode: _targetLanguage.nllbCode,
+        speed: 1.0,
+      );
+    }
+
+    _streamingActive = true;
+    state = state.copyWith(
+      phase: PipelinePhase.listening,
+      isStreaming: true,
+      segments: [],
+      currentTranscription: null,
+      currentTranslation: null,
+      errorMessage: null,
+    );
+
+    try {
+      // Avvia la registrazione audio continua
+      await _audioService.startRecording(
+        onCountdown: (_) {
+          // Nello streaming non usiamo countdown
+        },
+        onAmplitude: (_) {
+          // Ampiezza gestita internamente
+        },
+        onSilenceDetected: () {
+          // Nello streaming il silenzio non ferma, fa solo una pausa
+          AppLogger.debug(_tag, 'Silenzio rilevato (streaming continua)');
+        },
+        onMaxDurationReached: () {
+          // Nello streaming non c'e' durata massima, ricicliamo
+          AppLogger.info(_tag, 'Durata massima chunk, riavvio registrazione');
+          _processCurrentChunk();
+        },
+      );
+
+      // Avvia timer per processare chunk ogni 3-5 secondi
+      _chunkTimer = Timer.periodic(
+        const Duration(seconds: 4),
+        (_) => _processCurrentChunk(),
+      );
+
+      AppLogger.info(_tag, 'Streaming avviato con successo');
+    } catch (e) {
+      AppLogger.error(_tag, 'Errore avvio streaming', e);
+      _streamingActive = false;
+      state = PipelineState.error('Errore avvio: $e');
+    }
+  }
+
+  /// Ferma lo streaming e salva nella cronologia
+  Future<void> stopStreaming() async {
+    if (!_streamingActive) return;
+
+    AppLogger.info(_tag, 'Stop streaming...');
+    _streamingActive = false;
+    _chunkTimer?.cancel();
+    _chunkTimer = null;
+
+    // Processa l'ultimo chunk se disponibile
+    await _processCurrentChunk();
+
+    // Ferma la registrazione
+    await _audioService.stopRecording();
+
+    // Ferma il TTS se sta parlando
+    await _ttsService.stop();
+
+    state = state.copyWith(
+      phase: PipelinePhase.idle,
+      isStreaming: false,
+    );
+
+    // Salva nella cronologia se ci sono segmenti
+    if (state.segments.isNotEmpty) {
+      await _saveToHistory();
+    }
+
+    AppLogger.info(_tag, 'Streaming fermato');
+  }
+
+  /// Processa il chunk audio corrente (trascrivi + traduci)
+  Future<void> _processCurrentChunk() async {
+    if (!_streamingActive) return;
+
+    try {
+      // Ferma brevemente la registrazione per ottenere il file
+      final audioPath = await _audioService.stopRecording();
+      if (audioPath == null) {
+        // Nessun audio, riavvia la registrazione
+        if (_streamingActive) {
+          await _restartRecording();
+        }
+        return;
+      }
+
+      // Converti l'audio in campioni float32
+      final samples = await _audioService.wavToFloat32Samples(audioPath);
+      if (samples.length < 1600) {
+        // Meno di 0.1 secondi, troppo corto
+        AppLogger.debug(_tag, 'Chunk troppo corto, skip');
+        if (_streamingActive) {
+          await _restartRecording();
+        }
+        return;
+      }
+
+      // --- TRASCRIZIONE ---
+      if (mounted) {
+        state = state.copyWith(phase: PipelinePhase.transcribing);
+      }
+
+      final modelsPath = await _downloadService.getModelsBasePath();
+      final whisperModelPath = '$modelsPath/whisper/ggml-medium.bin';
+
+      final langCode = _sourceLanguage.nllbCode == 'auto'
+          ? null
+          : _sourceLanguage.whisperCode;
+
+      final transcription = await WhisperFFI.transcribeInIsolate(
+        libraryPath: 'libwhisper.so',
+        modelPath: whisperModelPath,
+        audioSamples: samples,
+        languageCode: langCode,
+      );
+
+      if (transcription.text.trim().isEmpty) {
+        AppLogger.debug(_tag, 'Trascrizione vuota, skip');
+        if (_streamingActive) {
+          await _restartRecording();
+        }
+        return;
+      }
+
+      AppLogger.info(_tag, 'Trascritto: "${transcription.text}"');
+
+      if (mounted) {
+        state = state.copyWith(
+          currentTranscription: transcription.text,
+          detectedLanguage: transcription.detectedLanguage,
+        );
+      }
+
+      // --- TRADUZIONE ---
+      if (mounted) {
+        state = state.copyWith(phase: PipelinePhase.translating);
+      }
+
+      final nllbModelDir = '$modelsPath/nllb';
+
+      // Determina lingua sorgente per NLLB
+      String srcLangCode;
+      if (_sourceLanguage.nllbCode == 'auto' &&
+          transcription.detectedLanguage.isNotEmpty) {
+        final detected =
+            findLanguageByWhisperCode(transcription.detectedLanguage);
+        srcLangCode = detected?.nllbCode ?? 'eng_Latn';
+      } else {
+        srcLangCode = _sourceLanguage.nllbCode;
+      }
+
+      final translated = await OnnxFFI.translateInIsolate(
+        libraryPath: 'libonnxruntime.so',
+        modelDir: nllbModelDir,
+        inputText: transcription.text,
+        sourceLanguageCode: srcLangCode,
+        targetLanguageCode: _targetLanguage.nllbCode,
+      );
+
+      AppLogger.info(_tag, 'Tradotto: "$translated"');
+
+      // Aggiungi il segmento alla lista
+      final segment = TranslatedSegment(
+        transcribedText: transcription.text,
+        translatedText: translated,
+        timestamp: DateTime.now(),
+      );
+
+      final updatedSegments = [...state.segments, segment];
+
+      if (mounted) {
+        state = state.copyWith(
+          segments: updatedSegments,
+          currentTranscription: transcription.text,
+          currentTranslation: translated,
+          phase: PipelinePhase.listening,
+        );
+      }
+
+      // --- TTS (solo modalita' speech) ---
+      if (state.mode == AppMode.speech && translated.isNotEmpty) {
+        if (mounted) {
+          state = state.copyWith(phase: PipelinePhase.speaking);
+        }
+        await _ttsService.speak(translated);
+        if (mounted) {
+          state = state.copyWith(phase: PipelinePhase.listening);
+        }
+      }
+
+      // Riavvia la registrazione per il prossimo chunk
+      if (_streamingActive) {
+        await _restartRecording();
+      }
+    } catch (e) {
+      AppLogger.error(_tag, 'Errore processamento chunk', e);
+      // Non interrompere lo streaming per un singolo errore di chunk
+      if (_streamingActive && mounted) {
+        state = state.copyWith(phase: PipelinePhase.listening);
+        await _restartRecording();
+      }
+    }
+  }
+
+  /// Riavvia la registrazione dopo aver processato un chunk
+  Future<void> _restartRecording() async {
+    if (!_streamingActive) return;
 
     try {
       await _audioService.startRecording(
-        onCountdown: (remaining) {
-          if (mounted) {
-            state = state.copyWith(remainingSeconds: remaining);
-          }
-        },
-        onAmplitude: (amp) {
-          // L'ampiezza viene usata per l'animazione del pulsante
-          // Non modifichiamo lo stato qui per evitare rebuild eccessivi
-        },
-        onSilenceDetected: () {
-          AppLogger.info(_tag, 'Silenzio rilevato, stop automatico');
-          stopRecordingAndProcess();
-        },
+        onCountdown: (_) {},
+        onAmplitude: (_) {},
+        onSilenceDetected: () {},
         onMaxDurationReached: () {
-          AppLogger.info(_tag, 'Durata massima raggiunta');
-          stopRecordingAndProcess();
+          _processCurrentChunk();
         },
       );
     } catch (e) {
-      AppLogger.error(_tag, 'Errore avvio registrazione', e);
-      state = PipelineState.error('Errore registrazione: $e');
+      AppLogger.error(_tag, 'Errore riavvio registrazione', e);
     }
-  }
-
-  /// Ferma la registrazione e avvia la pipeline di elaborazione
-  Future<void> stopRecordingAndProcess() async {
-    AppLogger.info(_tag, 'Stop registrazione e avvio elaborazione...');
-
-    try {
-      final audioPath = await _audioService.stopRecording();
-      if (audioPath == null) {
-        state = PipelineState.error('Nessun file audio registrato');
-        return;
-      }
-
-      AppLogger.info(_tag, 'File audio: $audioPath');
-
-      // Converti WAV in campioni float32
-      final samples = await _audioService.wavToFloat32Samples(audioPath);
-      AppLogger.info(_tag, 'Campioni audio: ${samples.length}');
-
-      // --- FASE 1: Trascrizione con Whisper ---
-      await _transcribe(samples);
-
-      if (state.rawText == null || state.rawText!.isEmpty) {
-        state = PipelineState.error(
-            'Nessun testo trascritto. Prova a parlare piu\' chiaramente.');
-        return;
-      }
-
-      // --- FASE 2: Correzione con Phi-3 (opzionale) ---
-      if (state.correctionEnabled) {
-        await _correct(state.rawText!);
-      }
-
-      // --- FASE 3: Traduzione con NLLB ---
-      final textToTranslate =
-          state.correctedText ?? state.rawText!;
-      await _translate(textToTranslate);
-
-      // Pipeline completata
-      state = state.copyWith(phase: PipelinePhase.completed);
-      AppLogger.info(_tag, 'Pipeline completata con successo!');
-
-      // Salva nella cronologia
-      await _saveToHistory();
-    } catch (e) {
-      AppLogger.error(_tag, 'Errore pipeline', e);
-      state = PipelineState.error('Errore: $e');
-    }
-  }
-
-  /// Fase 1: Trascrizione audio con Whisper.cpp
-  Future<void> _transcribe(List<double> samples) async {
-    AppLogger.info(_tag, 'FASE 1: Trascrizione con Whisper...');
-    state = state.copyWith(phase: PipelinePhase.transcribing);
-
-    final modelsPath = await _downloadService.getModelsBasePath();
-    final whisperModelPath = '$modelsPath/whisper/ggml-small.bin';
-
-    // Determina il codice lingua per Whisper
-    final langCode = _sourceLanguage.nllbCode == 'auto'
-        ? null
-        : _sourceLanguage.whisperCode;
-
-    final result = await WhisperFFI.transcribeInIsolate(
-      libraryPath: 'libwhisper.so',
-      modelPath: whisperModelPath,
-      audioSamples: samples,
-      languageCode: langCode,
-    );
-
-    AppLogger.info(
-        _tag, 'Trascrizione: "${result.text}" (lingua: ${result.detectedLanguage})');
-
-    state = state.copyWith(
-      rawText: result.text,
-      detectedLanguage: result.detectedLanguage,
-    );
-
-    // Se la lingua sorgente era "auto", aggiorna con quella rilevata
-    if (_sourceLanguage.nllbCode == 'auto') {
-      final detected =
-          findLanguageByWhisperCode(result.detectedLanguage);
-      if (detected != null) {
-        AppLogger.info(
-            _tag, 'Lingua rilevata automaticamente: ${detected.nameIt}');
-      }
-    }
-  }
-
-  /// Fase 2: Correzione testo con Phi-3 via llama.cpp
-  Future<void> _correct(String text) async {
-    AppLogger.info(_tag, 'FASE 2: Correzione con Phi-3...');
-    state = state.copyWith(phase: PipelinePhase.correcting);
-
-    final modelsPath = await _downloadService.getModelsBasePath();
-    final phi3ModelPath =
-        '$modelsPath/phi3/Phi-3-mini-4k-instruct-q4.gguf';
-
-    try {
-      final corrected = await LlamaFFI.correctInIsolate(
-        libraryPath: 'libllama.so',
-        modelPath: phi3ModelPath,
-        inputText: text,
-      );
-
-      AppLogger.info(_tag, 'Testo corretto: "$corrected"');
-      state = state.copyWith(correctedText: corrected);
-    } catch (e) {
-      AppLogger.error(_tag, 'Errore correzione (continuiamo senza)', e);
-      // Se la correzione fallisce, usiamo il testo originale
-      state = state.copyWith(correctedText: text);
-    }
-  }
-
-  /// Fase 3: Traduzione con NLLB-200 via ONNX
-  Future<void> _translate(String text) async {
-    AppLogger.info(_tag, 'FASE 3: Traduzione con NLLB-200...');
-    state = state.copyWith(phase: PipelinePhase.translating);
-
-    final modelsPath = await _downloadService.getModelsBasePath();
-    final nllbModelDir = '$modelsPath/nllb';
-
-    // Determina la lingua sorgente per NLLB
-    String srcLangCode;
-    if (_sourceLanguage.nllbCode == 'auto' &&
-        state.detectedLanguage != null) {
-      final detected =
-          findLanguageByWhisperCode(state.detectedLanguage!);
-      srcLangCode = detected?.nllbCode ?? 'eng_Latn';
-    } else {
-      srcLangCode = _sourceLanguage.nllbCode;
-    }
-
-    final translated = await OnnxFFI.translateInIsolate(
-      libraryPath: 'libonnxruntime.so',
-      modelDir: nllbModelDir,
-      inputText: text,
-      sourceLanguageCode: srcLangCode,
-      targetLanguageCode: _targetLanguage.nllbCode,
-    );
-
-    AppLogger.info(_tag, 'Testo tradotto: "$translated"');
-    state = state.copyWith(translatedText: translated);
   }
 
   /// Salva il risultato nella cronologia
   Future<void> _saveToHistory() async {
+    if (state.segments.isEmpty) return;
+
     AppLogger.info(_tag, 'Salvataggio in cronologia...');
 
     String srcLangCode = _sourceLanguage.nllbCode;
     String srcLangName = _sourceLanguage.nameIt;
 
-    // Se auto-detect, usa la lingua rilevata
     if (_sourceLanguage.nllbCode == 'auto' &&
         state.detectedLanguage != null) {
       final detected =
@@ -287,9 +366,8 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
       targetLanguageCode: _targetLanguage.nllbCode,
       sourceLanguageName: srcLangName,
       targetLanguageName: _targetLanguage.nameIt,
-      rawText: state.rawText ?? '',
-      correctedText: state.correctedText,
-      translatedText: state.translatedText ?? '',
+      rawText: state.fullTranscription,
+      translatedText: state.fullTranslation,
     );
 
     try {
@@ -303,7 +381,9 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
   /// Resetta la pipeline allo stato iniziale
   void reset() {
     AppLogger.info(_tag, 'Reset pipeline');
-    state = PipelineState.initial(
-        correctionEnabled: state.correctionEnabled);
+    _chunkTimer?.cancel();
+    _chunkTimer = null;
+    _streamingActive = false;
+    state = PipelineState.initial(mode: state.mode);
   }
 }

@@ -4,11 +4,8 @@ library;
 
 /// Impostazioni dell'applicazione
 class AppSettings {
-  /// Se mostrare il testo grezzo STT nella schermata principale
-  final bool showRawText;
-
-  /// Se abilitare la correzione Phi-3
-  final bool correctionEnabled;
+  /// Se mostrare il testo trascritto originale nella schermata principale
+  final bool showTranscription;
 
   /// Sensibilità del rilevamento silenzio (0.0 - 1.0)
   final double silenceSensitivity;
@@ -19,57 +16,69 @@ class AppSettings {
   /// Codice NLLB dell'ultima lingua target usata
   final String lastTargetLanguageCode;
 
+  /// Ultima modalità usata ('text' o 'speech')
+  final String lastMode;
+
+  /// Velocità TTS per la modalità parlato (0.0 - 2.0, default 1.0)
+  final double ttsSpeed;
+
   const AppSettings({
-    this.showRawText = true,
-    this.correctionEnabled = true,
+    this.showTranscription = true,
     this.silenceSensitivity = 0.03,
     this.lastSourceLanguageCode = 'auto',
     this.lastTargetLanguageCode = 'eng_Latn',
+    this.lastMode = 'text',
+    this.ttsSpeed = 1.0,
   });
 
   /// Crea una copia con i campi modificati
   AppSettings copyWith({
-    bool? showRawText,
-    bool? correctionEnabled,
+    bool? showTranscription,
     double? silenceSensitivity,
     String? lastSourceLanguageCode,
     String? lastTargetLanguageCode,
+    String? lastMode,
+    double? ttsSpeed,
   }) =>
       AppSettings(
-        showRawText: showRawText ?? this.showRawText,
-        correctionEnabled: correctionEnabled ?? this.correctionEnabled,
+        showTranscription: showTranscription ?? this.showTranscription,
         silenceSensitivity: silenceSensitivity ?? this.silenceSensitivity,
         lastSourceLanguageCode:
             lastSourceLanguageCode ?? this.lastSourceLanguageCode,
         lastTargetLanguageCode:
             lastTargetLanguageCode ?? this.lastTargetLanguageCode,
+        lastMode: lastMode ?? this.lastMode,
+        ttsSpeed: ttsSpeed ?? this.ttsSpeed,
       );
 
   /// Serializza in Map per SharedPreferences
   Map<String, dynamic> toMap() => {
-        'showRawText': showRawText,
-        'correctionEnabled': correctionEnabled,
+        'showTranscription': showTranscription,
         'silenceSensitivity': silenceSensitivity,
         'lastSourceLanguageCode': lastSourceLanguageCode,
         'lastTargetLanguageCode': lastTargetLanguageCode,
+        'lastMode': lastMode,
+        'ttsSpeed': ttsSpeed,
       };
 
   /// Deserializza da Map
   factory AppSettings.fromMap(Map<String, dynamic> map) => AppSettings(
-        showRawText: map['showRawText'] as bool? ?? true,
-        correctionEnabled: map['correctionEnabled'] as bool? ?? true,
+        showTranscription: map['showTranscription'] as bool? ?? true,
         silenceSensitivity: map['silenceSensitivity'] as double? ?? 0.03,
         lastSourceLanguageCode:
             map['lastSourceLanguageCode'] as String? ?? 'auto',
         lastTargetLanguageCode:
             map['lastTargetLanguageCode'] as String? ?? 'eng_Latn',
+        lastMode: map['lastMode'] as String? ?? 'text',
+        ttsSpeed: map['ttsSpeed'] as double? ?? 1.0,
       );
 
   @override
   String toString() => 'AppSettings('
-      'showRaw: $showRawText, '
-      'correction: $correctionEnabled, '
+      'showTranscr: $showTranscription, '
       'sensitivity: $silenceSensitivity, '
       'src: $lastSourceLanguageCode, '
-      'tgt: $lastTargetLanguageCode)';
+      'tgt: $lastTargetLanguageCode, '
+      'mode: $lastMode, '
+      'ttsSpeed: $ttsSpeed)';
 }

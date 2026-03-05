@@ -108,13 +108,14 @@ class AudioService {
     AppLogger.info(_tag, 'Registrazione avviata');
 
     // Timer countdown (ogni secondo)
-    int remainingSeconds = kMaxRecordingDurationSec;
+    // Nello streaming i chunk sono brevi, countdown max 60s come fallback
+    int remainingSeconds = 60;
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       remainingSeconds--;
       onCountdown(remainingSeconds);
 
       if (remainingSeconds <= 0) {
-        AppLogger.info(_tag, 'Durata massima raggiunta ($kMaxRecordingDurationSec s)');
+        AppLogger.info(_tag, 'Durata massima raggiunta (60 s)');
         timer.cancel();
         onMaxDurationReached();
       }
@@ -140,8 +141,9 @@ class AudioService {
         if (normalizedAmp < _silenceSensitivity) {
           _silenceCount++;
           // 2 secondi di silenzio = 10 intervalli da 200ms
+          // 3 secondi di silenzio = 15 intervalli da 200ms
           final silenceThresholdCount =
-              (kSilenceThresholdSec * 1000 / 200).round();
+              (kStreamingSilenceThresholdSec * 1000 / 200).round();
           if (_silenceCount >= silenceThresholdCount) {
             AppLogger.info(_tag,
                 'Silenzio rilevato dopo ${_silenceCount * 200}ms');

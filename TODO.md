@@ -1,49 +1,37 @@
-# TODO List - VoiceTranslate
+# TODO List - VoiceTranslate v2.0
 
 ## Completati
 
-- [x] Creazione progetto Flutter con struttura Clean Architecture
-- [x] pubspec.yaml con tutte le dipendenze (Riverpod, go_router, Hive, Dio, FFI, etc.)
-- [x] Core layer: costanti, tema scuro/chiaro, logger, eccezioni tipizzate
-- [x] 50 lingue NLLB con codici e nomi in italiano
-- [x] Domain entities: PipelineState, DownloadState, TranslationEntry, AppSettings
-- [x] FFI bindings: WhisperFFI, LlamaFFI, OnnxFFI con Isolate separati
-- [x] Download service con resume HTTP Range, retry con backoff, verifica checksum
-- [x] Audio service con registrazione WAV 16kHz, rilevamento silenzio, countdown
-- [x] History repository con Hive (max 10 voci)
-- [x] Settings repository con SharedPreferences
-- [x] Provider Riverpod: app, download, pipeline, history
-- [x] Router go_router con transizioni animate
-- [x] Schermata download con progress bar individuali e globale
-- [x] Schermata principale con selettori lingua, registrazione, risultati, cronologia
-- [x] Schermata impostazioni con toggle, slider, gestione modelli
-- [x] Schermata errore con messaggi chiari e azioni suggerite
-- [x] Widget riutilizzabili: DownloadProgressCard, RecordingButton, TextResultCard, etc.
-- [x] Configurazione Android: NDK 25+, CMake 3.22+, minSdk 26, arm64-v8a
-- [x] CMakeLists.txt per compilazione whisper.cpp e llama.cpp
-- [x] Wrapper C per llama.cpp (llama_simple_chat)
-- [x] AndroidManifest.xml con tutti i permessi necessari
-- [x] README.md con istruzioni build complete
-- [x] ARCHITETTURA.md con documentazione struttura
+- [x] Architettura streaming live con chunk audio 3-4s
+- [x] Due modalita': sottotitoli (testo) e parlato (TTS)
+- [x] Stack ottimizzato: Whisper Medium (1.5GB) + NLLB-200 ONNX (1.2GB)
+- [x] Rimosso Phi-3/llama.cpp (non piu' necessario con Whisper Medium)
+- [x] Download robusto byte-level con resume esatto da interruzione
+- [x] Retry con backoff esponenziale (5 tentativi, 2-32s)
+- [x] TTS nativo Android con velocita' configurabile
+- [x] Pipeline streaming: ascolto -> trascrizione -> traduzione -> TTS
+- [x] Toggle modalita' TEXT/SPEECH nella home screen
+- [x] Selettori lingua con 50 lingue NLLB e auto-detect
+- [x] Cronologia 20 voci con Hive (swipe-to-delete, copia)
+- [x] Impostazioni: trascrizione visibile, sensibilita' silenzio, velocita' TTS
+- [x] Analisi statica 0 errori
+- [x] Codice morto spostato in DA CANCELLARE
 
 ## Da Fare (richiedono dispositivo Android)
 
-- [ ] Clonare whisper.cpp e llama.cpp come submodule git
-- [ ] Compilare e testare su dispositivo ARM64 fisico
-- [ ] Integrare ONNX Runtime per Android (libonnxruntime.so)
-- [ ] Creare icona app personalizzata (microfono + onde sonore, blu/bianco)
-- [ ] Test end-to-end della pipeline completa
-- [ ] Ottimizzazione performance inferenza su device
+- [ ] Clonare whisper.cpp come submodule git
+- [ ] Compilare whisper.cpp con NDK 27 per ARM64
+- [ ] Integrare ONNX Runtime .so per Android
+- [ ] Test end-to-end pipeline streaming su device fisico
+- [ ] Icona app personalizzata
+- [ ] Ottimizzazione latenza streaming (overlap chunk)
 - [ ] Gestione OutOfMemoryError con fallback
-- [ ] WorkManager per download in background
-- [ ] Verifica RAM disponibile e avviso per Phi-3
 
 ## Miglioramenti Futuri
 
-- [ ] Supporto landscape e tablet
-- [ ] Esportazione cronologia (CSV/JSON)
+- [ ] VAD (Voice Activity Detection) per processare solo quando si parla
+- [ ] Cache traduzioni ripetute
+- [ ] Esportazione sessione (testo completo + traduzione)
 - [ ] Widget Android per traduzione rapida
-- [ ] Modalita' conversazione bidirezionale
-- [ ] Supporto per piu' modelli Whisper (tiny, base, medium, large)
-- [ ] Cache tokenizzazione per traduzioni ripetute
-- [ ] Compressione modelli per ridurre spazio su disco
+- [ ] Supporto landscape e tablet
+- [ ] Compressione modelli per ridurre spazio disco

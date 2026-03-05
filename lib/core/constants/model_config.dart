@@ -33,25 +33,17 @@ class ModelFileConfig {
 }
 
 /// Tutti i file modello da scaricare
+/// Stack ottimizzato: Whisper Medium (1.5GB) + NLLB-200 ONNX (1.2GB)
+/// Rimosso Phi-3 per semplicità e risparmio RAM/storage
 const List<ModelFileConfig> kModelFiles = [
-  // --- Whisper Small multilingual ---
+  // --- Whisper Medium multilingual (migliore accuratezza) ---
   ModelFileConfig(
-    displayName: 'Whisper Small (Trascrizione)',
+    displayName: 'Whisper Medium (Trascrizione)',
     url:
-        'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
-    fileName: 'ggml-small.bin',
-    expectedSizeBytes: 488000000, // ~466 MB
+        'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin',
+    fileName: 'ggml-medium.bin',
+    expectedSizeBytes: 1533000000, // ~1.5 GB
     subFolder: 'whisper',
-  ),
-
-  // --- Phi-3 Mini Q4 ---
-  ModelFileConfig(
-    displayName: 'Phi-3 Mini Q4 (Correzione)',
-    url:
-        'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf',
-    fileName: 'Phi-3-mini-4k-instruct-q4.gguf',
-    expectedSizeBytes: 2300000000, // ~2.2 GB
-    subFolder: 'phi3',
   ),
 
   // --- NLLB-200 distilled 600M (ONNX) ---
@@ -60,7 +52,7 @@ const List<ModelFileConfig> kModelFiles = [
     url:
         'https://huggingface.co/facebook/nllb-200-distilled-600M/resolve/main/onnx/model.onnx',
     fileName: 'model.onnx',
-    expectedSizeBytes: 1200000000, // ~1.2 GB principale
+    expectedSizeBytes: 1200000000, // ~1.2 GB
     subFolder: 'nllb',
   ),
   ModelFileConfig(

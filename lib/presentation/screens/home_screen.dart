@@ -1,5 +1,6 @@
 /// Schermata principale dell'app VoiceTranslate.
-/// Contiene selettori lingua, pulsante registrazione, risultati e cronologia.
+/// Due modalita': sottotitoli (testo a schermo) e parlato (TTS).
+/// Streaming live: trascrizione e traduzione in tempo reale.
 library;
 
 import 'package:flutter/material.dart';
@@ -24,7 +25,7 @@ import 'package:voice_translate/presentation/widgets/text_result_card.dart';
 /// Tag per i log di questo modulo
 const String _tag = 'HomeScreen';
 
-/// Schermata principale con registrazione e risultati
+/// Schermata principale con streaming live a due modalita'
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -42,19 +43,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   /// Inizializza permessi e carica cronologia
   Future<void> _initPermissionsAndHistory() async {
-    // Richiedi permesso microfono
     await PermissionsHelper.requestMicrophonePermission();
-
-    // Carica cronologia
     ref.read(historyListProvider.notifier).load();
-
-    // Carica impostazioni e ripristina ultime lingue
     await ref.read(appSettingsProvider.notifier).load();
-    final settings = ref.read(appSettingsProvider);
 
-    // Ripristina lingue dalla sessione precedente
+    final settings = ref.read(appSettingsProvider);
     final pipeline = ref.read(pipelineStateProvider.notifier);
 
+    // Ripristina lingue dalla sessione precedente
     if (settings.lastSourceLanguageCode == 'auto') {
       pipeline.setSourceLanguage(kAutoDetectLanguage);
     } else {
@@ -62,29 +58,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           findLanguageByNllbCode(settings.lastSourceLanguageCode);
       if (srcLang != null) pipeline.setSourceLanguage(srcLang);
     }
-
     final tgtLang =
         findLanguageByNllbCode(settings.lastTargetLanguageCode);
     if (tgtLang != null) pipeline.setTargetLanguage(tgtLang);
 
-    // Sincronizza stato correzione
-    pipeline.setCorrectionEnabled(settings.correctionEnabled);
+    // Ripristina modalita'
+    final mode =
+        settings.lastMode == 'speech' ? AppMode.speech : AppMode.text;
+    pipeline.setMode(mode);
   }
 
-  /// Gestisce la pressione del pulsante di registrazione
-  Future<void> _handleRecordButton() async {
+  /// Gestisce la pressione del pulsante streaming
+  Future<void> _handleStreamButton() async {
     final pipeline = ref.read(pipelineStateProvider.notifier);
-    final currentPhase = ref.read(pipelineStateProvider).phase;
+    final currentState = ref.read(pipelineStateProvider);
 
-    if (currentPhase == PipelinePhase.recording) {
-      // Ferma registrazione e processa
-      AppLogger.info(_tag, 'Stop registrazione da pulsante');
-      await pipeline.stopRecordingAndProcess();
-      // Aggiorna cronologia dopo elaborazione
+    if (currentState.isStreaming) {
+      // Ferma lo streaming
+      AppLogger.info(_tag, 'Stop streaming da pulsante');
+      await pipeline.stopStreaming();
       ref.read(historyListProvider.notifier).refresh();
-    } else if (currentPhase == PipelinePhase.idle ||
-        currentPhase == PipelinePhase.completed ||
-        currentPhase == PipelinePhase.error) {
+    } else {
       // Verifica permesso microfono
       final hasPermission =
           await PermissionsHelper.isMicrophoneGranted();
@@ -96,7 +90,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text(
-                    'Permesso microfono necessario per la registrazione'),
+                    'Permesso microfono necessario per lo streaming'),
               ),
             );
           }
@@ -104,10 +98,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         }
       }
 
-      // Avvia registrazione
-      AppLogger.info(_tag, 'Avvio registrazione da pulsante');
+      // Avvia streaming
+      AppLogger.info(_tag, 'Avvio streaming da pulsante');
       pipeline.reset();
-      await pipeline.startRecording();
+      await pipeline.startStreaming();
     }
   }
 
@@ -136,12 +130,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           children: [
             const SizedBox(height: 8),
 
+            // --- Toggle modalita' TEXT / SPEECH ---
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _ModeToggle(
+                currentMode: pipelineState.mode,
+                onChanged: (mode) {
+                  pipeline.setMode(mode);
+                  ref.read(appSettingsProvider.notifier).update(
+                        lastMode: mode == AppMode.speech ? 'speech' : 'text',
+                      );
+                },
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
             // --- Selettori lingua ---
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  // Lingua sorgente
                   Expanded(
                     child: LanguageSelector(
                       label: 'Da',
@@ -155,15 +164,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       showAutoDetect: true,
                     ),
                   ),
-
-                  // Pulsante scambia lingue
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: IconButton(
                       onPressed: () {
                         final src = pipeline.sourceLanguage;
                         final tgt = pipeline.targetLanguage;
-                        // Non scambiare se sorgente e' "auto"
                         if (src.nllbCode == 'auto') return;
                         pipeline.setSourceLanguage(tgt);
                         pipeline.setTargetLanguage(src);
@@ -179,8 +185,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       ),
                     ),
                   ),
-
-                  // Lingua target
                   Expanded(
                     child: LanguageSelector(
                       label: 'A',
@@ -199,12 +203,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
             const SizedBox(height: 32),
 
-            // --- Pulsante registrazione ---
+            // --- Pulsante streaming ---
             Center(
               child: RecordingButton(
                 phase: pipelineState.phase,
-                remainingSeconds: pipelineState.remainingSeconds,
-                onPressed: _handleRecordButton,
+                isStreaming: pipelineState.isStreaming,
+                onPressed: _handleStreamButton,
               ),
             ),
 
@@ -215,29 +219,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
             const SizedBox(height: 16),
 
-            // --- Risultati ---
-            // Testo trascritto grezzo
-            TextResultCard(
-              title: 'Testo trascritto',
-              text: pipelineState.rawText,
-              icon: Icons.text_fields,
-              visible: settings.showRawText,
-            ),
+            // --- Area risultati live ---
+            // Traduzione corrente (grande, in evidenza)
+            if (pipelineState.currentTranslation != null)
+              TextResultCard(
+                title: 'Traduzione',
+                text: pipelineState.currentTranslation,
+                icon: Icons.translate,
+              ),
 
-            // Testo corretto
-            TextResultCard(
-              title: 'Testo corretto',
-              text: pipelineState.correctedText,
-              icon: Icons.auto_fix_high,
-              visible: settings.correctionEnabled,
-            ),
+            // Trascrizione corrente (piccola, opzionale)
+            if (settings.showTranscription &&
+                pipelineState.currentTranscription != null)
+              TextResultCard(
+                title: 'Trascrizione originale',
+                text: pipelineState.currentTranscription,
+                icon: Icons.text_fields,
+              ),
 
-            // Testo tradotto
-            TextResultCard(
-              title: 'Testo tradotto',
-              text: pipelineState.translatedText,
-              icon: Icons.translate,
-            ),
+            // --- Testo completo accumulato ---
+            if (pipelineState.segments.length > 1)
+              TextResultCard(
+                title: 'Traduzione completa',
+                text: pipelineState.fullTranslation,
+                icon: Icons.list_alt,
+              ),
 
             // --- Errore ---
             if (pipelineState.phase == PipelinePhase.error &&
@@ -302,14 +308,122 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 8),
-
             HistoryList(
               entries: history,
               onDelete: (id) {
                 ref.read(historyListProvider.notifier).delete(id);
               },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Toggle per la modalita' TEXT / SPEECH
+class _ModeToggle extends StatelessWidget {
+  final AppMode currentMode;
+  final ValueChanged<AppMode> onChanged;
+
+  const _ModeToggle({
+    required this.currentMode,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Row(
+        children: [
+          // Pulsante sottotitoli
+          Expanded(
+            child: _ModeButton(
+              label: 'Sottotitoli',
+              icon: Icons.subtitles,
+              isSelected: currentMode == AppMode.text,
+              onTap: () => onChanged(AppMode.text),
+            ),
+          ),
+          // Pulsante parlato
+          Expanded(
+            child: _ModeButton(
+              label: 'Parlato',
+              icon: Icons.record_voice_over,
+              isSelected: currentMode == AppMode.speech,
+              onTap: () => onChanged(AppMode.speech),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Singolo pulsante del toggle modalita'
+class _ModeButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _ModeButton({
+    required this.label,
+    required this.icon,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppColors.primaryBlue
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: isSelected
+                  ? Colors.white
+                  : Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.5),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: isSelected
+                        ? Colors.white
+                        : Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.5),
+                    fontWeight:
+                        isSelected ? FontWeight.w600 : FontWeight.normal,
+                  ),
             ),
           ],
         ),

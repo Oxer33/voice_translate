@@ -1,5 +1,7 @@
 /// Servizio per il download dei modelli ML da Hugging Face.
-/// Supporta resume, retry con backoff esponenziale e verifica SHA256.
+/// Resume robusto byte-level: se il download si interrompe,
+/// riprende esattamente dal byte dove era rimasto.
+/// Usa streaming manuale con IOSink per non perdere mai dati.
 library;
 
 import 'dart:async';
@@ -35,7 +37,7 @@ typedef DownloadStatusCallback = void Function(
   String? errorMessage,
 );
 
-/// Servizio per scaricare i modelli con supporto resume e retry
+/// Servizio per scaricare i modelli con resume robusto byte-level
 class DownloadService {
   /// Client HTTP Dio per i download
   late final Dio _dio;
@@ -48,13 +50,18 @@ class DownloadService {
 
   DownloadService() {
     _dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(minutes: 30),
+      connectTimeout: Duration(seconds: kDownloadConnectTimeoutSec),
+      receiveTimeout: Duration(seconds: kDownloadReceiveTimeoutSec),
       headers: {
-        'User-Agent': 'VoiceTranslate/1.0',
+        'User-Agent': 'VoiceTranslate/2.0',
+        // Necessario per Hugging Face
+        'Accept': '*/*',
       },
+      // IMPORTANTE: non seguire redirect automatici per gestire manualmente
+      followRedirects: true,
+      maxRedirects: 5,
     ));
-    AppLogger.info(_tag, 'DownloadService inizializzato');
+    AppLogger.info(_tag, 'DownloadService inizializzato (resume robusto)');
   }
 
   /// Ottiene la cartella base per i modelli
@@ -90,8 +97,8 @@ class DownloadService {
     // Controlla che la dimensione sia ragionevole (almeno 90% della dimensione attesa)
     final minExpectedSize = (config.expectedSizeBytes * 0.9).toInt();
     final isValid = fileSize >= minExpectedSize;
-    AppLogger.debug(
-        _tag, 'File ${config.fileName}: $fileSize bytes (attesi ~${config.expectedSizeBytes}), valido: $isValid');
+    AppLogger.debug(_tag,
+        'File ${config.fileName}: $fileSize bytes (attesi ~${config.expectedSizeBytes}), valido: $isValid');
     return isValid;
   }
 
@@ -112,14 +119,12 @@ class DownloadService {
   Future<int> getAvailableDiskSpace() async {
     try {
       final appDir = await getApplicationDocumentsDirectory();
-      // Su Android usiamo 'df' per ottenere lo spazio libero
       final result = await Process.run('df', [appDir.path]);
       if (result.exitCode == 0) {
         final lines = result.stdout.toString().split('\n');
         if (lines.length > 1) {
           final parts = lines[1].split(RegExp(r'\s+'));
           if (parts.length >= 4) {
-            // Il quarto campo e' lo spazio disponibile in blocchi da 1KB
             final availableKB = int.tryParse(parts[3]) ?? 0;
             final availableBytes = availableKB * 1024;
             AppLogger.info(
@@ -131,12 +136,14 @@ class DownloadService {
     } catch (e) {
       AppLogger.error(_tag, 'Errore lettura spazio disco', e);
     }
-    // Fallback: restituisce un valore alto per non bloccare
     AppLogger.warning(_tag, 'Impossibile determinare spazio disco, uso fallback');
     return 10 * 1024 * 1024 * 1024; // 10 GB fallback
   }
 
-  /// Scarica un singolo modello con supporto resume e retry
+  /// Scarica un singolo modello con resume ROBUSTO byte-level.
+  /// Usa streaming manuale: apre un IOSink in append e scrive chunk per chunk.
+  /// Se il download si interrompe, il file .tmp contiene esattamente
+  /// i byte scaricati e il resume riparte da li'.
   Future<void> downloadModel({
     required int modelIndex,
     required ModelFileConfig config,
@@ -160,75 +167,158 @@ class DownloadService {
     int retryCount = 0;
 
     while (retryCount < kMaxDownloadRetries) {
+      IOSink? sink;
       try {
         onStatus(modelIndex, DownloadStatus.downloading, null);
 
-        // Determina quanti byte sono gia' stati scaricati (per resume)
+        // Determina quanti byte sono gia' stati scaricati (resume esatto)
         int downloadedBytes = 0;
         if (await tempFile.exists()) {
           downloadedBytes = await tempFile.length();
           AppLogger.info(_tag,
-              'Resume download da $downloadedBytes bytes per ${config.fileName}');
+              'RESUME: riprendo da byte $downloadedBytes per ${config.fileName}');
+        }
+
+        // Prima richiesta HEAD per ottenere la dimensione totale del file
+        int totalBytes = config.expectedSizeBytes;
+        try {
+          final headResponse = await _dio.head(
+            config.url,
+            cancelToken: cancelToken,
+          );
+          final contentLength =
+              headResponse.headers.value('content-length');
+          if (contentLength != null) {
+            totalBytes = int.tryParse(contentLength) ?? config.expectedSizeBytes;
+            AppLogger.info(_tag,
+                'Dimensione totale server: $totalBytes bytes');
+          }
+        } catch (e) {
+          AppLogger.warning(_tag, 'HEAD fallita, uso dimensione attesa: $e');
+        }
+
+        // Se il file e' gia' completo, skip
+        if (downloadedBytes >= totalBytes && totalBytes > 0) {
+          AppLogger.info(_tag,
+              'File gia\' completo ($downloadedBytes >= $totalBytes), rinomino');
+          if (await tempFile.exists()) {
+            // Se il file finale esiste già, eliminalo prima di rinominare
+            if (await file.exists()) {
+              await file.delete();
+            }
+            await tempFile.rename(filePath);
+          }
+          onStatus(modelIndex, DownloadStatus.completed, null);
+          return;
         }
 
         // Headers per il resume (HTTP Range)
         final headers = <String, dynamic>{};
         if (downloadedBytes > 0) {
           headers['Range'] = 'bytes=$downloadedBytes-';
+          AppLogger.info(_tag, 'Range header: bytes=$downloadedBytes-');
         }
 
-        // Variabili per calcolo velocita'
-        int lastBytes = downloadedBytes;
-        DateTime lastTime = DateTime.now();
-
-        // Esegue il download
-        await _dio.download(
+        // Richiesta GET con ResponseType.stream per ricevere i dati come stream
+        final response = await _dio.get<ResponseBody>(
           config.url,
-          tempPath,
           cancelToken: cancelToken,
-          deleteOnError: false,
           options: Options(
             headers: headers,
             responseType: ResponseType.stream,
           ),
-          onReceiveProgress: (received, total) {
-            // Se in pausa, annulla il download
-            if (_pauseFlags[modelIndex] == true) {
-              cancelToken.cancel('Pausa richiesta');
-              return;
-            }
-
-            // Calcola i byte totali considerando il resume
-            final actualReceived = downloadedBytes + received;
-            final actualTotal =
-                total > 0 ? downloadedBytes + total : config.expectedSizeBytes;
-
-            // Calcola velocita' (aggiorna ogni 500ms)
-            final now = DateTime.now();
-            final elapsed = now.difference(lastTime).inMilliseconds;
-            double speed = 0;
-            if (elapsed > 500) {
-              speed = (actualReceived - lastBytes) / (elapsed / 1000);
-              lastBytes = actualReceived;
-              lastTime = now;
-            }
-
-            onProgress(modelIndex, actualReceived, actualTotal, speed);
-          },
         );
 
-        // Download completato - rinomina il file temporaneo
-        if (await tempFile.exists()) {
-          await tempFile.rename(filePath);
-          AppLogger.info(
-              _tag, 'Download completato: ${config.fileName}');
+        // Verifica che il server supporti il resume (206 Partial Content)
+        final statusCode = response.statusCode ?? 200;
+        AppLogger.info(_tag, 'Risposta server: HTTP $statusCode');
+
+        if (statusCode == 200 && downloadedBytes > 0) {
+          // Il server non supporta Range, ricominciamo da zero
+          AppLogger.warning(_tag,
+              'Server non supporta Range, ricominciamo da zero');
+          downloadedBytes = 0;
+          if (await tempFile.exists()) {
+            await tempFile.delete();
+          }
         }
 
-        // Verifica integrita' (se il file e' abbastanza grande)
+        // Apri il file in modalita' APPEND (aggiunge byte al fondo)
+        final fileSink = tempFile.openWrite(mode: FileMode.append);
+        sink = fileSink;
+
+        // Variabili per calcolo velocita'
+        int lastProgressBytes = downloadedBytes;
+        DateTime lastProgressTime = DateTime.now();
+        int currentBytes = downloadedBytes;
+
+        // Leggi lo stream chunk per chunk e scrivi su disco
+        final stream = response.data?.stream;
+        if (stream == null) {
+          throw Exception('Stream di risposta null');
+        }
+
+        await for (final chunk in stream) {
+          // Controlla pausa/cancellazione
+          if (_pauseFlags[modelIndex] == true) {
+            AppLogger.info(_tag,
+                'Pausa richiesta a byte $currentBytes');
+            await fileSink.flush();
+            await fileSink.close();
+            sink = null;
+            onStatus(modelIndex, DownloadStatus.paused, null);
+            return;
+          }
+
+          if (cancelToken.isCancelled) {
+            AppLogger.info(_tag, 'Download annullato a byte $currentBytes');
+            await fileSink.flush();
+            await fileSink.close();
+            sink = null;
+            onStatus(modelIndex, DownloadStatus.error, 'Download annullato');
+            return;
+          }
+
+          // Scrivi il chunk su disco IMMEDIATAMENTE
+          fileSink.add(chunk);
+          currentBytes += chunk.length;
+
+          // Calcola velocita' (aggiorna ogni 500ms)
+          final now = DateTime.now();
+          final elapsed = now.difference(lastProgressTime).inMilliseconds;
+          double speed = 0;
+          if (elapsed > 500) {
+            speed = (currentBytes - lastProgressBytes) / (elapsed / 1000);
+            lastProgressBytes = currentBytes;
+            lastProgressTime = now;
+          }
+
+          // Notifica progresso
+          onProgress(modelIndex, currentBytes, totalBytes, speed);
+        }
+
+        // Flush e chiudi il file
+        await fileSink.flush();
+        await fileSink.close();
+        sink = null;
+
+        AppLogger.info(_tag,
+            'Stream completato: $currentBytes bytes scritti per ${config.fileName}');
+
+        // Rinomina il file temporaneo nel file finale
+        if (await tempFile.exists()) {
+          if (await file.exists()) {
+            await file.delete();
+          }
+          await tempFile.rename(filePath);
+          AppLogger.info(_tag, 'Download completato: ${config.fileName}');
+        }
+
+        // Verifica integrita'
         onStatus(modelIndex, DownloadStatus.verifying, null);
         final finalSize = await file.length();
-        AppLogger.info(
-            _tag, 'Verifica integrita ${config.fileName}: $finalSize bytes');
+        AppLogger.info(_tag,
+            'Verifica integrita ${config.fileName}: $finalSize bytes (attesi: $totalBytes)');
 
         // Se il checksum SHA256 e' disponibile, verificalo
         if (config.sha256 != null) {
@@ -246,9 +336,16 @@ class DownloadService {
 
         onStatus(modelIndex, DownloadStatus.completed, null);
         AppLogger.info(
-            _tag, 'Modello ${config.displayName} scaricato e verificato');
+            _tag, 'Modello ${config.displayName} scaricato e verificato!');
         return;
       } on DioException catch (e) {
+        // Chiudi il sink se aperto
+        try {
+          await sink?.flush();
+          await sink?.close();
+        } catch (_) {}
+        sink = null;
+
         if (e.type == DioExceptionType.cancel) {
           if (_pauseFlags[modelIndex] == true) {
             AppLogger.info(_tag, 'Download in pausa: ${config.fileName}');
@@ -261,35 +358,58 @@ class DownloadService {
         }
 
         retryCount++;
-        final waitSeconds = pow(2, retryCount).toInt();
+        // Backoff esponenziale: 2, 4, 8, 16, 32 secondi
+        final waitSeconds = min(pow(2, retryCount).toInt(), 60);
+
+        // Salva i byte scaricati finora (il file .tmp e' gia' su disco)
+        int savedBytes = 0;
+        if (await tempFile.exists()) {
+          savedBytes = await tempFile.length();
+        }
         AppLogger.warning(_tag,
-            'Errore download ${config.fileName} (tentativo $retryCount/$kMaxDownloadRetries): $e');
-        AppLogger.info(_tag, 'Riprovo tra $waitSeconds secondi...');
+            'Errore download ${config.fileName} (tentativo $retryCount/$kMaxDownloadRetries), '
+            'salvati $savedBytes bytes. Errore: ${e.message}');
 
         if (retryCount < kMaxDownloadRetries) {
           onStatus(modelIndex, DownloadStatus.error,
-              'Errore di rete. Riprovo tra $waitSeconds secondi... (tentativo $retryCount/$kMaxDownloadRetries)');
+              'Errore di rete. Salvati ${_formatBytes(savedBytes)}. '
+              'Riprovo tra $waitSeconds s... ($retryCount/$kMaxDownloadRetries)');
           await Future.delayed(Duration(seconds: waitSeconds));
+          // Il prossimo ciclo riprende dal file .tmp esistente!
+          // Crea un nuovo cancel token per il retry
+          final newCancelToken = CancelToken();
+          _cancelTokens[modelIndex] = newCancelToken;
         } else {
           onStatus(modelIndex, DownloadStatus.error,
-              'Download fallito dopo $kMaxDownloadRetries tentativi: ${e.message}');
+              'Download fallito dopo $kMaxDownloadRetries tentativi. '
+              'Salvati ${_formatBytes(savedBytes)}. Riprova piu\' tardi.');
           throw ModelDownloadException(
             'Download fallito: ${e.message}',
             modelName: config.displayName,
-            downloadedBytes:
-                await tempFile.exists() ? await tempFile.length() : 0,
+            downloadedBytes: savedBytes,
             originalError: e,
           );
         }
       } catch (e) {
+        // Chiudi il sink se aperto
+        try {
+          await sink?.flush();
+          await sink?.close();
+        } catch (_) {}
+        sink = null;
+
         retryCount++;
         AppLogger.error(_tag, 'Errore inaspettato download', e);
         if (retryCount >= kMaxDownloadRetries) {
           onStatus(modelIndex, DownloadStatus.error, 'Errore: $e');
           rethrow;
         }
-        final waitSeconds = pow(2, retryCount).toInt();
+        final waitSeconds = min(pow(2, retryCount).toInt(), 60);
+        onStatus(modelIndex, DownloadStatus.error,
+            'Errore. Riprovo tra $waitSeconds s... ($retryCount/$kMaxDownloadRetries)');
         await Future.delayed(Duration(seconds: waitSeconds));
+        final newCancelToken = CancelToken();
+        _cancelTokens[modelIndex] = newCancelToken;
       }
     }
   }
@@ -298,7 +418,6 @@ class DownloadService {
   void pauseDownload(int modelIndex) {
     AppLogger.info(_tag, 'Pausa download modello index: $modelIndex');
     _pauseFlags[modelIndex] = true;
-    _cancelTokens[modelIndex]?.cancel('Pausa richiesta');
   }
 
   /// Annulla un download specifico
@@ -311,8 +430,8 @@ class DownloadService {
   /// Annulla tutti i download in corso
   void cancelAllDownloads() {
     AppLogger.info(_tag, 'Annullamento di tutti i download');
-    for (final token in _cancelTokens.values) {
-      token.cancel('Annullamento globale');
+    for (final entry in _cancelTokens.entries) {
+      entry.value.cancel('Annullamento globale');
     }
     _cancelTokens.clear();
     _pauseFlags.clear();
@@ -326,7 +445,6 @@ class DownloadService {
       await file.delete();
       AppLogger.info(_tag, 'Modello eliminato: ${config.fileName}');
     }
-    // Elimina anche il file temporaneo se esiste
     final tempFile = File('$filePath.tmp');
     if (await tempFile.exists()) {
       await tempFile.delete();
@@ -350,6 +468,16 @@ class DownloadService {
       AppLogger.error(_tag, 'Errore verifica checksum', e);
       return false;
     }
+  }
+
+  /// Formatta i byte in formato leggibile
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
   /// Rilascia le risorse del servizio

@@ -1,5 +1,5 @@
 /// Schermata impostazioni dell'app VoiceTranslate.
-/// Gestisce toggle, slider sensibilita', gestione modelli e info.
+/// Gestisce toggle trascrizione, slider sensibilita'/TTS, gestione modelli e info.
 library;
 
 import 'package:flutter/material.dart';
@@ -38,36 +38,23 @@ class SettingsScreen extends ConsumerWidget {
           // ========== SEZIONE: VISUALIZZAZIONE ==========
           _buildSectionHeader(theme, 'Visualizzazione'),
 
-          // Toggle testo grezzo STT
+          // Toggle trascrizione originale
           _buildSwitchTile(
             theme: theme,
-            title: 'Mostra testo grezzo STT',
+            title: 'Mostra trascrizione originale',
             subtitle:
-                'Mostra il testo trascritto prima della correzione',
-            value: settings.showRawText,
+                'Mostra il testo nella lingua originale oltre alla traduzione',
+            value: settings.showTranscription,
             onChanged: (value) {
-              AppLogger.info(_tag, 'Toggle testo grezzo: $value');
-              settingsNotifier.update(showRawText: value);
-            },
-          ),
-
-          // Toggle correzione Phi-3
-          _buildSwitchTile(
-            theme: theme,
-            title: 'Correzione testo (Phi-3)',
-            subtitle:
-                'Correggi automaticamente errori di trascrizione con IA',
-            value: settings.correctionEnabled,
-            onChanged: (value) {
-              AppLogger.info(_tag, 'Toggle correzione: $value');
-              settingsNotifier.update(correctionEnabled: value);
+              AppLogger.info(_tag, 'Toggle trascrizione: $value');
+              settingsNotifier.update(showTranscription: value);
             },
           ),
 
           const SizedBox(height: 8),
 
-          // ========== SEZIONE: REGISTRAZIONE ==========
-          _buildSectionHeader(theme, 'Registrazione'),
+          // ========== SEZIONE: AUDIO ==========
+          _buildSectionHeader(theme, 'Audio e Rilevamento'),
 
           // Slider sensibilita' silenzio
           Padding(
@@ -82,7 +69,7 @@ class SettingsScreen extends ConsumerWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'Sensibilita\' rilevamento silenzio',
+                          'Sensibilita\' silenzio',
                           style: theme.textTheme.bodyLarge,
                         ),
                         Text(
@@ -107,22 +94,74 @@ class SettingsScreen extends ConsumerWidget {
                       min: 0.01,
                       max: 0.15,
                       divisions: 14,
-                      label:
-                          '${(settings.silenceSensitivity * 100).toStringAsFixed(0)}%',
                       onChanged: (value) {
                         settingsNotifier.update(
                             silenceSensitivity: value);
                       },
                     ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 8),
+
+          // ========== SEZIONE: TTS ==========
+          _buildSectionHeader(theme, 'Modalita\' Parlato (TTS)'),
+
+          // Slider velocita' TTS
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('Meno sensibile',
+                        Text(
+                          'Velocita\' parlato',
+                          style: theme.textTheme.bodyLarge,
+                        ),
+                        Text(
+                          '${settings.ttsSpeed.toStringAsFixed(1)}x',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: AppColors.primaryBlue,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Regola la velocita\' della voce nella modalita\' parlato',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface
+                            .withValues(alpha: 0.5),
+                      ),
+                    ),
+                    Slider(
+                      value: settings.ttsSpeed,
+                      min: 0.5,
+                      max: 2.0,
+                      divisions: 15,
+                      label: '${settings.ttsSpeed.toStringAsFixed(1)}x',
+                      onChanged: (value) {
+                        settingsNotifier.update(ttsSpeed: value);
+                      },
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Lento',
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: theme.colorScheme.onSurface
                                   .withValues(alpha: 0.3),
                             )),
-                        Text('Piu\' sensibile',
+                        Text('Veloce',
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: theme.colorScheme.onSurface
                                   .withValues(alpha: 0.3),
@@ -140,7 +179,6 @@ class SettingsScreen extends ConsumerWidget {
           // ========== SEZIONE: MODELLI ==========
           _buildSectionHeader(theme, 'Modelli IA'),
 
-          // Lista modelli con opzione ri-scarica
           ...List.generate(kModelFiles.length, (index) {
             final config = kModelFiles[index];
             return Padding(
@@ -155,8 +193,7 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                   ),
                   subtitle: Text(
-                    'File: ${config.fileName}\n'
-                    'Dimensione: ~${(config.expectedSizeBytes / (1024 * 1024)).toStringAsFixed(0)} MB',
+                    '~${(config.expectedSizeBytes / (1024 * 1024)).toStringAsFixed(0)} MB',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface
                           .withValues(alpha: 0.5),
@@ -171,7 +208,6 @@ class SettingsScreen extends ConsumerWidget {
                       foregroundColor: AppColors.primaryBlue,
                     ),
                   ),
-                  isThreeLine: true,
                 ),
               ),
             );
@@ -190,20 +226,19 @@ class SettingsScreen extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildInfoRow(
-                        theme, 'Versione app', '1.0.0'),
+                    _buildInfoRow(theme, 'Versione app', '2.0.0'),
                     const Divider(height: 16),
-                    _buildInfoRow(theme, 'Whisper',
-                        'ggml-small (multilingual)'),
-                    const Divider(height: 16),
-                    _buildInfoRow(
-                        theme, 'Correzione', 'Phi-3 Mini Q4'),
+                    _buildInfoRow(theme, 'Trascrizione',
+                        'Whisper Medium (1.5 GB)'),
                     const Divider(height: 16),
                     _buildInfoRow(theme, 'Traduzione',
                         'NLLB-200 distilled 600M'),
                     const Divider(height: 16),
-                    _buildInfoRow(theme, 'Inferenza',
-                        '100% on-device, offline'),
+                    _buildInfoRow(theme, 'Parlato',
+                        'TTS nativo Android'),
+                    const Divider(height: 16),
+                    _buildInfoRow(theme, 'Modalita\'',
+                        'Streaming live + offline'),
                   ],
                 ),
               ),
@@ -216,7 +251,6 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  /// Header di sezione
   Widget _buildSectionHeader(ThemeData theme, String title) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
@@ -231,7 +265,6 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  /// Tile con switch
   Widget _buildSwitchTile({
     required ThemeData theme,
     required String title,
@@ -261,7 +294,6 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  /// Riga informativa
   Widget _buildInfoRow(ThemeData theme, String label, String value) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -283,7 +315,6 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  /// Conferma ri-download di un modello
   void _confirmRedownload(
     BuildContext context,
     WidgetRef ref,
@@ -295,8 +326,7 @@ class SettingsScreen extends ConsumerWidget {
       builder: (ctx) => AlertDialog(
         title: const Text('Ri-scarica modello'),
         content: Text(
-            'Vuoi eliminare e ri-scaricare "$modelName"?\n\n'
-            'Il modello verra\' eliminato e scaricato nuovamente.'),
+            'Vuoi eliminare e ri-scaricare "$modelName"?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),

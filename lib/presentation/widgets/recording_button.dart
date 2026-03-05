@@ -1,18 +1,18 @@
-/// Widget pulsante di registrazione con animazione.
-/// Mostra un pulsante circolare animato con countdown.
+/// Widget pulsante streaming con animazione.
+/// Mostra un pulsante circolare che avvia/ferma lo streaming live.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:voice_translate/core/theme/app_theme.dart';
 import 'package:voice_translate/domain/entities/pipeline_state.dart';
 
-/// Pulsante di registrazione con animazione pulsante e countdown
+/// Pulsante di streaming con animazione pulsante
 class RecordingButton extends StatefulWidget {
   /// Fase corrente della pipeline
   final PipelinePhase phase;
 
-  /// Secondi rimanenti (0-60)
-  final int remainingSeconds;
+  /// Se lo streaming e' attivo
+  final bool isStreaming;
 
   /// Callback quando si preme il pulsante
   final VoidCallback onPressed;
@@ -20,7 +20,7 @@ class RecordingButton extends StatefulWidget {
   const RecordingButton({
     super.key,
     required this.phase,
-    required this.remainingSeconds,
+    required this.isStreaming,
     required this.onPressed,
   });
 
@@ -49,8 +49,8 @@ class _RecordingButtonState extends State<RecordingButton>
   @override
   void didUpdateWidget(RecordingButton oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Avvia/ferma l'animazione in base alla fase
-    if (widget.phase == PipelinePhase.recording) {
+    // Avvia/ferma l'animazione in base allo streaming
+    if (widget.isStreaming) {
       _pulseController.repeat(reverse: true);
     } else {
       _pulseController.stop();
@@ -66,58 +66,40 @@ class _RecordingButtonState extends State<RecordingButton>
 
   @override
   Widget build(BuildContext context) {
-    final isRecording = widget.phase == PipelinePhase.recording;
     final isProcessing = widget.phase == PipelinePhase.transcribing ||
-        widget.phase == PipelinePhase.correcting ||
-        widget.phase == PipelinePhase.translating;
+        widget.phase == PipelinePhase.translating ||
+        widget.phase == PipelinePhase.speaking;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // --- Countdown timer ---
-        if (isRecording) ...[
-          Text(
-            _formatSeconds(widget.remainingSeconds),
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w300,
-                  color: widget.remainingSeconds <= 10
-                      ? AppColors.error
-                      : AppColors.primaryBlue,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-          ),
-          const SizedBox(height: 16),
-        ],
-
         // --- Pulsante principale ---
         AnimatedBuilder(
           animation: _pulseAnimation,
           builder: (context, child) {
             return Transform.scale(
-              scale: isRecording ? _pulseAnimation.value : 1.0,
+              scale: widget.isStreaming ? _pulseAnimation.value : 1.0,
               child: child,
             );
           },
           child: GestureDetector(
-            onTap: isProcessing ? null : widget.onPressed,
+            onTap: widget.onPressed,
             child: Container(
-              width: 80,
-              height: 80,
+              width: 88,
+              height: 88,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: isRecording
+                color: widget.isStreaming
                     ? AppColors.error
-                    : isProcessing
-                        ? AppColors.darkTextTertiary
-                        : AppColors.primaryBlue,
+                    : AppColors.primaryBlue,
                 boxShadow: [
                   BoxShadow(
-                    color: (isRecording
+                    color: (widget.isStreaming
                             ? AppColors.error
                             : AppColors.primaryBlue)
                         .withValues(alpha: 0.4),
-                    blurRadius: isRecording ? 24 : 16,
-                    spreadRadius: isRecording ? 4 : 0,
+                    blurRadius: widget.isStreaming ? 24 : 16,
+                    spreadRadius: widget.isStreaming ? 4 : 0,
                   ),
                 ],
               ),
@@ -133,9 +115,9 @@ class _RecordingButtonState extends State<RecordingButton>
                         ),
                       )
                     : Icon(
-                        isRecording ? Icons.stop : Icons.mic,
+                        widget.isStreaming ? Icons.stop : Icons.mic,
                         color: Colors.white,
-                        size: 36,
+                        size: 40,
                       ),
               ),
             ),
@@ -146,7 +128,9 @@ class _RecordingButtonState extends State<RecordingButton>
 
         // --- Label stato ---
         Text(
-          _getStatusLabel(),
+          widget.isStreaming
+              ? 'Tocca per fermare'
+              : phaseDisplayName(widget.phase),
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context)
                     .colorScheme
@@ -156,32 +140,5 @@ class _RecordingButtonState extends State<RecordingButton>
         ),
       ],
     );
-  }
-
-  /// Formatta i secondi come "0:45"
-  String _formatSeconds(int seconds) {
-    final mins = seconds ~/ 60;
-    final secs = seconds % 60;
-    return '$mins:${secs.toString().padLeft(2, '0')}';
-  }
-
-  /// Testo dello stato corrente
-  String _getStatusLabel() {
-    switch (widget.phase) {
-      case PipelinePhase.idle:
-        return 'Tocca per registrare';
-      case PipelinePhase.recording:
-        return 'Registrazione in corso...';
-      case PipelinePhase.transcribing:
-        return 'Trascrizione...';
-      case PipelinePhase.correcting:
-        return 'Correzione...';
-      case PipelinePhase.translating:
-        return 'Traduzione...';
-      case PipelinePhase.completed:
-        return 'Completato!';
-      case PipelinePhase.error:
-        return 'Errore';
-    }
   }
 }

@@ -1,146 +1,121 @@
-# Architettura VoiceTranslate
+# Architettura VoiceTranslate v2.0
 
 ## Panoramica
 
-VoiceTranslate e' un'app Flutter per Android che esegue trascrizione e traduzione vocale completamente offline.
-Utilizza Clean Architecture con separazione netta tra data, domain e presentation layer.
+VoiceTranslate e' un'app Flutter per Android che esegue trascrizione e traduzione vocale **in streaming live**, completamente offline dopo il download iniziale dei modelli.
+
+**Due modalita':**
+- **Sottotitoli**: traduzione mostrata come testo a schermo in tempo reale
+- **Parlato**: traduzione pronunciata con TTS nativo Android
+
+## Stack Ottimizzato
+
+| Componente | Modello | Dimensione |
+|-----------|---------|-----------|
+| Trascrizione STT | Whisper Medium (ggml) | ~1.5 GB |
+| Traduzione | NLLB-200 distilled 600M (ONNX) | ~1.2 GB |
+| Sintesi vocale | TTS nativo Android | 0 (integrato) |
+
+**Rimosso nella v2.0:** Phi-3 Mini / llama.cpp (correzione testo non piu' necessaria con Whisper Medium)
+
+## Pipeline Streaming
+
+```
+[Microfono - chunk audio 3-4s]
+       |
+       v  (ogni 4 secondi)
+[Whisper Medium - Trascrizione STT]  <- Dart Isolate
+       |
+       v
+[NLLB-200 ONNX - Traduzione]  <- Dart Isolate
+       |
+       v
+[Modalita' TEXT] -> Testo a schermo (sottotitoli live)
+[Modalita' SPEECH] -> TTS nativo Android (parlato)
+```
 
 ## Struttura del Progetto
 
 ```
 voice_translate/
-├── android/
-│   └── app/
-│       ├── build.gradle.kts          # Config NDK 25+, CMake 3.22+, minSdk 26, arm64-v8a
-│       └── src/main/
-│           ├── AndroidManifest.xml    # Permessi: microfono, internet, notifiche
-│           └── cpp/
-│               ├── CMakeLists.txt     # Compilazione whisper.cpp e llama.cpp come .so
-│               ├── llama_wrapper.cpp  # Wrapper C per FFI llama.cpp
-│               ├── whisper_cpp/       # [SUBMODULE] github.com/ggerganov/whisper.cpp
-│               └── llama_cpp/         # [SUBMODULE] github.com/ggerganov/llama.cpp
 ├── lib/
-│   ├── main.dart                      # Entry point, init Hive/Logger
-│   ├── app.dart                       # Widget root, tema, router, lifecycle
+│   ├── main.dart                      # Entry point
+│   ├── app.dart                       # Widget root, tema, router
 │   │
-│   ├── core/                          # Layer trasversale
+│   ├── core/
 │   │   ├── constants/
-│   │   │   ├── app_constants.dart     # Limiti, soglie, prompt correzione
-│   │   │   ├── model_config.dart      # URL modelli, dimensioni, checksum
-│   │   │   └── languages.dart         # 50 lingue NLLB con codici e nomi IT
-│   │   ├── theme/
-│   │   │   └── app_theme.dart         # Tema scuro/chiaro, colori, stili
+│   │   │   ├── app_constants.dart     # Parametri streaming, download, audio
+│   │   │   ├── model_config.dart      # URL modelli (Whisper Medium + NLLB)
+│   │   │   └── languages.dart         # 50 lingue NLLB
+│   │   ├── theme/app_theme.dart       # Tema scuro/chiaro
 │   │   ├── utils/
-│   │   │   ├── logger.dart            # Logger centralizzato con livelli
-│   │   │   └── permissions_helper.dart # Gestione permessi microfono/storage
-│   │   └── errors/
-│   │       └── app_exceptions.dart    # Eccezioni tipizzate per ogni modulo
+│   │   │   ├── logger.dart            # Logger centralizzato
+│   │   │   └── permissions_helper.dart
+│   │   └── errors/app_exceptions.dart
 │   │
-│   ├── domain/                        # Layer business logic
-│   │   └── entities/
-│   │       ├── translation_entry.dart # Voce cronologia traduzione
-│   │       ├── pipeline_state.dart    # Stato pipeline elaborazione
-│   │       ├── download_state.dart    # Stato download modelli
-│   │       └── app_settings.dart      # Impostazioni app persistenti
+│   ├── domain/entities/
+│   │   ├── pipeline_state.dart        # AppMode (TEXT/SPEECH), PipelinePhase, TranslatedSegment
+│   │   ├── download_state.dart        # Stato download modelli
+│   │   ├── translation_entry.dart     # Voce cronologia
+│   │   └── app_settings.dart          # Impostazioni (showTranscription, ttsSpeed, lastMode)
 │   │
-│   ├── data/                          # Layer dati e infrastruttura
+│   ├── data/
 │   │   ├── datasources/
-│   │   │   ├── whisper_ffi.dart       # Binding FFI whisper.cpp (Isolate)
-│   │   │   ├── llama_ffi.dart         # Binding FFI llama.cpp (Isolate)
-│   │   │   └── onnx_ffi.dart          # Binding FFI ONNX Runtime (Isolate)
+│   │   │   ├── whisper_ffi.dart       # FFI whisper.cpp (Isolate)
+│   │   │   └── onnx_ffi.dart          # FFI ONNX Runtime (Isolate)
 │   │   ├── services/
-│   │   │   ├── download_service.dart  # Download modelli con resume/retry
-│   │   │   └── audio_service.dart     # Registrazione audio WAV 16kHz
+│   │   │   ├── download_service.dart  # Download robusto byte-level con resume
+│   │   │   ├── audio_service.dart     # Registrazione WAV 16kHz
+│   │   │   └── tts_service.dart       # Text-to-Speech nativo Android
 │   │   └── repositories/
-│   │       ├── history_repository.dart    # Cronologia con Hive
-│   │       └── settings_repository.dart   # Impostazioni con SharedPreferences
+│   │       ├── history_repository.dart
+│   │       └── settings_repository.dart
 │   │
-│   └── presentation/                  # Layer UI
+│   └── presentation/
 │       ├── providers/
-│       │   ├── app_providers.dart      # Provider centrali (servizi, repo)
-│       │   ├── download_provider.dart  # Stato download modelli
-│       │   ├── pipeline_provider.dart  # Pipeline registra->trascrivi->correggi->traduci
-│       │   └── history_provider.dart   # Lista cronologia reattiva
-│       ├── router/
-│       │   └── app_router.dart         # Navigazione con go_router
+│       │   ├── app_providers.dart      # Provider centrali (servizi, TTS, repo)
+│       │   ├── download_provider.dart  # Stato download
+│       │   ├── pipeline_provider.dart  # Pipeline streaming live
+│       │   └── history_provider.dart
+│       ├── router/app_router.dart
 │       ├── screens/
-│       │   ├── download_screen.dart    # Setup iniziale, download modelli
-│       │   ├── home_screen.dart        # Schermata principale
-│       │   ├── settings_screen.dart    # Impostazioni app
-│       │   └── error_screen.dart       # Errori con azioni suggerite
+│       │   ├── download_screen.dart    # Setup iniziale
+│       │   ├── home_screen.dart        # Due modalita' con toggle
+│       │   ├── settings_screen.dart    # Impostazioni + TTS speed
+│       │   └── error_screen.dart
 │       └── widgets/
-│           ├── download_progress_card.dart  # Card progresso singolo download
-│           ├── recording_button.dart        # Pulsante registrazione animato
-│           ├── text_result_card.dart        # Card risultato con copia
-│           ├── language_selector.dart       # Selettore lingua con ricerca
-│           ├── phase_indicator.dart         # Indicatore fase pipeline
-│           └── history_list.dart            # Lista cronologia traduzioni
-├── pubspec.yaml                       # Dipendenze Flutter
-└── README.md                          # Istruzioni build
+│           ├── download_progress_card.dart
+│           ├── recording_button.dart   # Pulsante streaming
+│           ├── text_result_card.dart
+│           ├── language_selector.dart
+│           ├── phase_indicator.dart
+│           └── history_list.dart
+│
+├── android/app/src/main/
+│   ├── AndroidManifest.xml            # Permessi
+│   └── cpp/
+│       ├── CMakeLists.txt             # Solo whisper.cpp (llama rimosso)
+│       └── whisper_cpp/               # [SUBMODULE]
+│
+└── DA CANCELLARE/                     # Codice morto (llama_ffi, llama_wrapper)
 ```
 
-## Pipeline di Elaborazione
+## Download Robusto
 
-```
-[Audio Microfono - WAV 16kHz mono 16-bit]
-       |
-       v
-[Whisper.cpp - Trascrizione STT]  <-- Dart Isolate separato
-       |
-       v
-[Phi-3 Mini via llama.cpp - Correzione]  <-- Dart Isolate separato (opzionale)
-       |
-       v
-[NLLB-200 via ONNX - Traduzione]  <-- Dart Isolate separato
-       |
-       v
-[Risultato mostrato a schermo + salvato in cronologia]
-```
-
-## Tecnologie Principali
-
-| Componente | Tecnologia | Note |
-|-----------|-----------|------|
-| Framework | Flutter 3.41+ | Solo Android |
-| Stato | Riverpod | StateNotifierProvider |
-| Navigazione | go_router | Transizioni animate |
-| Storage | Hive + SharedPreferences | Cronologia + impostazioni |
-| HTTP | Dio | Download con resume e retry |
-| STT | whisper.cpp via FFI | libwhisper.so ARM64 |
-| LLM | llama.cpp via FFI | libllama.so ARM64 |
-| Traduzione | ONNX Runtime via FFI | NNAPI dove disponibile |
-| Audio | record | WAV 16kHz mono 16-bit |
-
-## Decisioni Architetturali
-
-1. **Clean Architecture**: separazione netta tra domain, data e presentation
-2. **FFI su Isolate**: ogni inferenza ML gira su Isolate separato per non bloccare UI
-3. **Download con resume**: supporto HTTP Range per riprendere download interrotti
-4. **Retry con backoff esponenziale**: 3 tentativi con attesa crescente
-5. **Hive per cronologia**: storage locale veloce senza overhead SQL
-6. **SharedPreferences per settings**: semplice e affidabile per key-value
-7. **Tema automatico**: dark/light in base alle impostazioni di sistema
+- **Resume byte-level**: usa `IOSink` in append + header `Range: bytes=X-`
+- **Il file .tmp contiene esattamente i byte scaricati**: se l'app crasha, riprende da li'
+- **Retry con backoff esponenziale**: 2, 4, 8, 16, 32 secondi (max 5 tentativi)
+- **Streaming manuale**: non usa `dio.download()` che puo' bloccarsi
 
 ## Stato Implementazione
 
-- [x] Struttura progetto e architettura
-- [x] Core layer (costanti, tema, logger, eccezioni)
-- [x] Domain layer (entita')
-- [x] Data layer (FFI bindings, servizi, repository)
-- [x] Presentation layer (provider, schermate, widget, router)
-- [x] Configurazione Android (NDK, CMake, permessi)
-- [x] CMakeLists.txt per compilazione nativa
-- [x] Wrapper C per llama.cpp
-- [ ] Clonare whisper.cpp e llama.cpp come submodule
-- [ ] Compilazione e test su dispositivo ARM64
-- [ ] Integrazione ONNX Runtime per NLLB-200
-- [ ] Icona app personalizzata
-- [ ] Test end-to-end completo
-
-## Note per Chi Lavorera' al Progetto
-
-- I modelli ML pesano circa 4 GB totali, vengono scaricati al primo avvio
-- whisper.cpp e llama.cpp devono essere clonati in `android/app/src/main/cpp/`
-- L'app richiede un dispositivo ARM64 con almeno 4 GB di RAM
-- La correzione Phi-3 puo' essere disabilitata dalle impostazioni se la RAM e' insufficiente
-- Tutti i log usano AppLogger con tag per modulo per facile debug
+- [x] Architettura streaming con chunk audio 3-4s
+- [x] Due modalita' (sottotitoli + parlato con TTS)
+- [x] Download robusto con resume byte-level
+- [x] 50 lingue NLLB con auto-detect
+- [x] Cronologia 20 voci con Hive
+- [x] TTS nativo Android con velocita' configurabile
+- [x] UI con toggle modalita', selettori lingua, risultati live
+- [ ] Clonare whisper.cpp come submodule
+- [ ] Compilare e testare su ARM64
+- [ ] Integrare ONNX Runtime .so

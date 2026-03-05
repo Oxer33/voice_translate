@@ -7,6 +7,7 @@ import 'package:voice_translate/data/repositories/history_repository.dart';
 import 'package:voice_translate/data/repositories/settings_repository.dart';
 import 'package:voice_translate/data/services/audio_service.dart';
 import 'package:voice_translate/data/services/download_service.dart';
+import 'package:voice_translate/data/services/tts_service.dart';
 import 'package:voice_translate/domain/entities/app_settings.dart';
 
 /// Provider per il servizio di download dei modelli
@@ -19,6 +20,13 @@ final downloadServiceProvider = Provider<DownloadService>((ref) {
 /// Provider per il servizio audio
 final audioServiceProvider = Provider<AudioService>((ref) {
   final service = AudioService();
+  ref.onDispose(() => service.dispose());
+  return service;
+});
+
+/// Provider per il servizio TTS (Text-to-Speech)
+final ttsServiceProvider = Provider<TtsService>((ref) {
+  final service = TtsService();
   ref.onDispose(() => service.dispose());
   return service;
 });
@@ -54,18 +62,20 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
 
   /// Aggiorna le impostazioni
   Future<void> update({
-    bool? showRawText,
-    bool? correctionEnabled,
+    bool? showTranscription,
     double? silenceSensitivity,
     String? lastSourceLanguageCode,
     String? lastTargetLanguageCode,
+    String? lastMode,
+    double? ttsSpeed,
   }) async {
     state = await _repo.update(
-      showRawText: showRawText,
-      correctionEnabled: correctionEnabled,
+      showTranscription: showTranscription,
       silenceSensitivity: silenceSensitivity,
       lastSourceLanguageCode: lastSourceLanguageCode,
       lastTargetLanguageCode: lastTargetLanguageCode,
+      lastMode: lastMode,
+      ttsSpeed: ttsSpeed,
     );
   }
 }

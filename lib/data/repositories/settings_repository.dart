@@ -10,11 +10,12 @@ import 'package:voice_translate/domain/entities/app_settings.dart';
 const String _tag = 'SettingsRepository';
 
 // --- Chiavi SharedPreferences ---
-const String _keyShowRawText = 'settings_show_raw_text';
-const String _keyCorrectionEnabled = 'settings_correction_enabled';
+const String _keyShowTranscription = 'settings_show_transcription';
 const String _keySilenceSensitivity = 'settings_silence_sensitivity';
 const String _keyLastSourceLang = 'settings_last_source_lang';
 const String _keyLastTargetLang = 'settings_last_target_lang';
+const String _keyLastMode = 'settings_last_mode';
+const String _keyTtsSpeed = 'settings_tts_speed';
 
 /// Repository per la gestione delle impostazioni dell'app
 class SettingsRepository {
@@ -34,14 +35,15 @@ class SettingsRepository {
     AppLogger.debug(_tag, 'Caricamento impostazioni...');
 
     final settings = AppSettings(
-      showRawText: _prefs!.getBool(_keyShowRawText) ?? true,
-      correctionEnabled: _prefs!.getBool(_keyCorrectionEnabled) ?? true,
+      showTranscription: _prefs!.getBool(_keyShowTranscription) ?? true,
       silenceSensitivity:
           _prefs!.getDouble(_keySilenceSensitivity) ?? 0.03,
       lastSourceLanguageCode:
           _prefs!.getString(_keyLastSourceLang) ?? 'auto',
       lastTargetLanguageCode:
           _prefs!.getString(_keyLastTargetLang) ?? 'eng_Latn',
+      lastMode: _prefs!.getString(_keyLastMode) ?? 'text',
+      ttsSpeed: _prefs!.getDouble(_keyTtsSpeed) ?? 1.0,
     );
 
     AppLogger.debug(_tag, 'Impostazioni caricate: $settings');
@@ -54,11 +56,12 @@ class SettingsRepository {
     AppLogger.info(_tag, 'Salvataggio impostazioni: $settings');
 
     await Future.wait([
-      _prefs!.setBool(_keyShowRawText, settings.showRawText),
-      _prefs!.setBool(_keyCorrectionEnabled, settings.correctionEnabled),
+      _prefs!.setBool(_keyShowTranscription, settings.showTranscription),
       _prefs!.setDouble(_keySilenceSensitivity, settings.silenceSensitivity),
       _prefs!.setString(_keyLastSourceLang, settings.lastSourceLanguageCode),
       _prefs!.setString(_keyLastTargetLang, settings.lastTargetLanguageCode),
+      _prefs!.setString(_keyLastMode, settings.lastMode),
+      _prefs!.setDouble(_keyTtsSpeed, settings.ttsSpeed),
     ]);
 
     AppLogger.info(_tag, 'Impostazioni salvate con successo');
@@ -66,19 +69,21 @@ class SettingsRepository {
 
   /// Aggiorna un singolo campo delle impostazioni
   Future<AppSettings> update({
-    bool? showRawText,
-    bool? correctionEnabled,
+    bool? showTranscription,
     double? silenceSensitivity,
     String? lastSourceLanguageCode,
     String? lastTargetLanguageCode,
+    String? lastMode,
+    double? ttsSpeed,
   }) async {
     final current = load();
     final updated = current.copyWith(
-      showRawText: showRawText,
-      correctionEnabled: correctionEnabled,
+      showTranscription: showTranscription,
       silenceSensitivity: silenceSensitivity,
       lastSourceLanguageCode: lastSourceLanguageCode,
       lastTargetLanguageCode: lastTargetLanguageCode,
+      lastMode: lastMode,
+      ttsSpeed: ttsSpeed,
     );
     await save(updated);
     return updated;
