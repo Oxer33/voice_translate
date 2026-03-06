@@ -130,6 +130,42 @@ const List<WhisperModelConfig> kWhisperModels = [
       isRequired: false,
     ),
   ),
+
+  // --- Whisper Large V2: massima accuratezza ---
+  WhisperModelConfig(
+    id: 'large-v2',
+    displayName: 'Whisper Large V2',
+    description: 'Massima accuratezza V2 (~3.1 GB). Per telefoni potenti.',
+    speedRating: 1,
+    accuracyRating: 3,
+    fileConfig: ModelFileConfig(
+      displayName: 'Whisper Large V2 (Trascrizione)',
+      url:
+          'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v2.bin',
+      fileName: 'ggml-large-v2.bin',
+      expectedSizeBytes: 3094000000, // ~3.1 GB
+      subFolder: 'whisper',
+      isRequired: false,
+    ),
+  ),
+
+  // --- Whisper Large V3 Turbo: ultimo modello, veloce e accurato ---
+  WhisperModelConfig(
+    id: 'large-v3-turbo',
+    displayName: 'Whisper Large V3 Turbo',
+    description: 'Ultimo modello OpenAI (~1.6 GB). Veloce e accurato.',
+    speedRating: 2,
+    accuracyRating: 3,
+    fileConfig: ModelFileConfig(
+      displayName: 'Whisper Large V3 Turbo (Trascrizione)',
+      url:
+          'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin',
+      fileName: 'ggml-large-v3-turbo.bin',
+      expectedSizeBytes: 1620000000, // ~1.6 GB
+      subFolder: 'whisper',
+      isRequired: false,
+    ),
+  ),
 ];
 
 /// Modello Whisper di default (Small - buon compromesso)

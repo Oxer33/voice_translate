@@ -8,10 +8,14 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <!-- Notifiche: download in background -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <!-- Foreground service: download continuo in background -->
+    <!-- Foreground service: streaming audio a schermo spento -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <!-- Wake lock: mantieni attivo durante download -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <!-- Wake lock: mantieni CPU attiva durante streaming -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Impedisci ottimizzazione batteria per streaming continuo -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
     <application
         android:label="VoiceTranslate"

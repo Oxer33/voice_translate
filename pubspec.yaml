@@ -38,6 +38,9 @@ dependencies:
   # Text-to-Speech per modalità parlato
   flutter_tts: ^4.2.0
 
+  # Foreground service per funzionamento a schermo spento
+  flutter_foreground_task: ^8.12.0
+
   # HTTP per download modelli
   dio: ^5.7.0
 

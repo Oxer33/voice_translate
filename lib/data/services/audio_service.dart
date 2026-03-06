@@ -1,5 +1,11 @@
-/// Servizio per la registrazione audio dal microfono.
-/// Gestisce la registrazione WAV 16kHz mono 16-bit con rilevamento silenzio.
+/// Servizio audio con DUE modalita':
+/// 1. Streaming continuo: cattura PCM in tempo reale senza gap (per live translate)
+/// 2. File recording: registra su file WAV (legacy, per batch processing)
+///
+/// Lo streaming usa AudioRecorder.startStream() che restituisce un flusso
+/// continuo di byte PCM 16kHz mono 16-bit. I byte vengono accumulati in un
+/// buffer e quando raggiungono la durata di un chunk (~3-4s), viene emesso
+/// un callback con i campioni float32 pronti per Whisper.
 library;
 
 import 'dart:async';
@@ -17,40 +23,44 @@ import 'package:voice_translate/core/utils/logger.dart';
 /// Tag per i log di questo modulo
 const String _tag = 'AudioService';
 
-/// Callback per aggiornamento countdown
-typedef CountdownCallback = void Function(int remainingSeconds);
+/// Callback che riceve un chunk di campioni float32 pronti per Whisper
+typedef AudioChunkCallback = void Function(List<double> samples);
 
-/// Callback per livello ampiezza audio (per visualizzazione)
-typedef AmplitudeCallback = void Function(double amplitude);
+/// Tipo callback senza parametri (evita import di flutter nel data layer)
+typedef OnVoidAction = void Function();
 
-/// Servizio per la registrazione audio con rilevamento automatico del silenzio
+/// Servizio audio con streaming continuo e file recording
 class AudioService {
   /// Recorder instance
   final AudioRecorder _recorder = AudioRecorder();
 
-  /// Timer per il countdown
-  Timer? _countdownTimer;
+  /// Se lo streaming e' attivo
+  bool _isStreaming = false;
 
-  /// Timer per il controllo ampiezza (rilevamento silenzio)
-  Timer? _amplitudeTimer;
-
-  /// Durata del silenzio continuo rilevato (in intervalli di 200ms)
-  int _silenceCount = 0;
-
-  /// Se la registrazione e' in corso
+  /// Se la registrazione file e' in corso
   bool _isRecording = false;
 
-  /// Percorso del file audio corrente
-  String? _currentFilePath;
+  /// Subscription allo stream audio
+  StreamSubscription<List<int>>? _streamSubscription;
 
-  /// Sensibilita' del rilevamento silenzio
-  double _silenceSensitivity = kDefaultSilenceSensitivity;
+  /// Buffer per accumulare byte PCM durante lo streaming
+  final BytesBuilder _pcmBuffer = BytesBuilder(copy: false);
+
+  /// Numero di byte PCM per un chunk (3 secondi a 16kHz mono 16-bit = 96000 bytes)
+  int _chunkSizeBytes = kStreamingChunkDurationSec * kAudioSampleRate * 2;
+
+  /// Percorso del file audio corrente (per file recording)
+  String? _currentFilePath;
 
   AudioService() {
     AppLogger.info(_tag, 'AudioService inizializzato');
   }
 
-  /// Verifica se il microfono e' disponibile
+  // ============================================================
+  // PERMESSI
+  // ============================================================
+
+  /// Verifica se il microfono e' disponibile e ha i permessi
   Future<bool> isMicrophoneAvailable() async {
     try {
       final hasPermission = await _recorder.hasPermission();
@@ -62,23 +72,24 @@ class AudioService {
     }
   }
 
-  /// Avvia la registrazione audio
-  /// Registra in formato WAV 16kHz mono 16-bit
-  Future<void> startRecording({
-    required CountdownCallback onCountdown,
-    required AmplitudeCallback onAmplitude,
-    required OnVoidAction onSilenceDetected,
-    required OnVoidAction onMaxDurationReached,
-    double silenceSensitivity = kDefaultSilenceSensitivity,
+  // ============================================================
+  // MODALITA' 1: STREAMING CONTINUO (per live translate)
+  // ============================================================
+
+  /// Avvia lo streaming audio continuo.
+  /// Cattura PCM 16kHz mono 16-bit senza interruzioni.
+  /// Ogni volta che si accumula un chunk di [chunkDurationSec] secondi,
+  /// viene chiamato [onChunkReady] con i campioni float32.
+  Future<void> startStreaming({
+    required AudioChunkCallback onChunkReady,
+    int chunkDurationSec = kStreamingChunkDurationSec,
   }) async {
-    if (_isRecording) {
-      AppLogger.warning(_tag, 'Registrazione gia\' in corso, ignorata');
+    if (_isStreaming) {
+      AppLogger.warning(_tag, 'Streaming gia\' attivo, ignorato');
       return;
     }
 
-    _silenceSensitivity = silenceSensitivity;
-    AppLogger.info(_tag, 'Avvio registrazione audio...');
-    AppLogger.debug(_tag, 'Sensibilita\' silenzio: $_silenceSensitivity');
+    AppLogger.info(_tag, 'Avvio streaming audio continuo...');
 
     // Verifica permessi
     if (!await _recorder.hasPermission()) {
@@ -86,14 +97,119 @@ class AudioService {
           'Permesso microfono non concesso');
     }
 
-    // Prepara il percorso del file di output
+    // Calcola dimensione chunk in byte
+    // PCM 16-bit mono: 2 byte per campione, 16000 campioni/sec
+    _chunkSizeBytes = chunkDurationSec * kAudioSampleRate * 2;
+    AppLogger.debug(_tag,
+        'Chunk size: $_chunkSizeBytes bytes ($chunkDurationSec secondi)');
+
+    // Reset buffer
+    _pcmBuffer.clear();
+
+    // Configura la registrazione in streaming
+    // PCM 16kHz mono 16-bit - formato nativo per Whisper
+    const config = RecordConfig(
+      encoder: AudioEncoder.pcm16bits,
+      sampleRate: kAudioSampleRate,
+      numChannels: kAudioChannels,
+      // Auto encoder per migliore compatibilita'
+      autoGain: true,
+      echoCancel: true,
+      noiseSuppress: true,
+    );
+
+    // Avvia lo stream audio
+    final stream = await _recorder.startStream(config);
+    _isStreaming = true;
+
+    AppLogger.info(_tag, 'Stream audio avviato (PCM 16kHz mono 16-bit)');
+
+    // Ascolta lo stream e accumula byte nel buffer
+    _streamSubscription = stream.listen(
+      (List<int> pcmBytes) {
+        if (!_isStreaming) return;
+
+        // Aggiungi i byte al buffer
+        _pcmBuffer.add(Uint8List.fromList(pcmBytes));
+
+        // Se il buffer ha raggiunto la dimensione del chunk, emetti
+        if (_pcmBuffer.length >= _chunkSizeBytes) {
+          final chunkBytes = _pcmBuffer.takeBytes();
+          AppLogger.debug(_tag,
+              'Chunk audio pronto: ${chunkBytes.length} bytes '
+              '(${chunkBytes.length / (kAudioSampleRate * 2)} secondi)');
+
+          // Converti PCM 16-bit in float32 per Whisper
+          final samples = _pcm16ToFloat32(chunkBytes);
+
+          // Emetti il chunk al chiamante
+          onChunkReady(samples);
+        }
+      },
+      onError: (error) {
+        AppLogger.error(_tag, 'Errore stream audio', error);
+      },
+      onDone: () {
+        AppLogger.info(_tag, 'Stream audio terminato');
+        _isStreaming = false;
+      },
+    );
+  }
+
+  /// Ferma lo streaming audio continuo
+  Future<void> stopStreaming() async {
+    if (!_isStreaming) {
+      AppLogger.debug(_tag, 'Streaming non attivo');
+      return;
+    }
+
+    AppLogger.info(_tag, 'Stop streaming audio...');
+
+    _isStreaming = false;
+
+    // Cancella la subscription
+    await _streamSubscription?.cancel();
+    _streamSubscription = null;
+
+    // Ferma il recorder
+    await _recorder.stop();
+
+    // Processa eventuali byte rimasti nel buffer
+    final remainingBytes = _pcmBuffer.takeBytes();
+    AppLogger.info(_tag,
+        'Streaming fermato. Byte rimasti nel buffer: ${remainingBytes.length}');
+
+    // Pulisci il buffer
+    _pcmBuffer.clear();
+  }
+
+  /// Se lo streaming e' attivo
+  bool get isStreaming => _isStreaming;
+
+  // ============================================================
+  // MODALITA' 2: FILE RECORDING (legacy, per batch processing)
+  // ============================================================
+
+  /// Avvia la registrazione audio su file WAV
+  Future<void> startRecording({
+    required OnVoidAction onMaxDurationReached,
+  }) async {
+    if (_isRecording) {
+      AppLogger.warning(_tag, 'Registrazione gia\' in corso, ignorata');
+      return;
+    }
+
+    AppLogger.info(_tag, 'Avvio registrazione su file...');
+
+    if (!await _recorder.hasPermission()) {
+      throw const AudioRecordingException(
+          'Permesso microfono non concesso');
+    }
+
     final tempDir = await getTemporaryDirectory();
     _currentFilePath = p.join(tempDir.path,
         'recording_${DateTime.now().millisecondsSinceEpoch}.wav');
-    AppLogger.debug(_tag, 'File output: $_currentFilePath');
 
-    // Configura e avvia la registrazione
-    // WAV 16kHz mono 16-bit come richiesto da Whisper
     const config = RecordConfig(
       encoder: AudioEncoder.wav,
       sampleRate: kAudioSampleRate,
@@ -103,78 +219,15 @@ class AudioService {
 
     await _recorder.start(config, path: _currentFilePath!);
     _isRecording = true;
-    _silenceCount = 0;
-
-    AppLogger.info(_tag, 'Registrazione avviata');
-
-    // Timer countdown (ogni secondo)
-    // Nello streaming i chunk sono brevi, countdown max 60s come fallback
-    int remainingSeconds = 60;
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      remainingSeconds--;
-      onCountdown(remainingSeconds);
-
-      if (remainingSeconds <= 0) {
-        AppLogger.info(_tag, 'Durata massima raggiunta (60 s)');
-        timer.cancel();
-        onMaxDurationReached();
-      }
-    });
-
-    // Timer rilevamento ampiezza e silenzio (ogni 200ms)
-    _amplitudeTimer =
-        Timer.periodic(const Duration(milliseconds: 200), (timer) async {
-      if (!_isRecording) {
-        timer.cancel();
-        return;
-      }
-
-      try {
-        final amplitude = await _recorder.getAmplitude();
-        // amplitude.current e' in dBFS (negativo, 0 = max volume)
-        // Normalizziamo a 0.0 - 1.0
-        final normalizedAmp =
-            ((amplitude.current + 60) / 60).clamp(0.0, 1.0);
-        onAmplitude(normalizedAmp);
-
-        // Rilevamento silenzio: se l'ampiezza e' sotto la soglia
-        if (normalizedAmp < _silenceSensitivity) {
-          _silenceCount++;
-          // 2 secondi di silenzio = 10 intervalli da 200ms
-          // 3 secondi di silenzio = 15 intervalli da 200ms
-          final silenceThresholdCount =
-              (kStreamingSilenceThresholdSec * 1000 / 200).round();
-          if (_silenceCount >= silenceThresholdCount) {
-            AppLogger.info(_tag,
-                'Silenzio rilevato dopo ${_silenceCount * 200}ms');
-            onSilenceDetected();
-          }
-        } else {
-          _silenceCount = 0;
-        }
-      } catch (e) {
-        AppLogger.error(_tag, 'Errore lettura ampiezza', e);
-      }
-    });
+    AppLogger.info(_tag, 'Registrazione su file avviata: $_currentFilePath');
   }
 
-  /// Ferma la registrazione e restituisce il percorso del file WAV
+  /// Ferma la registrazione file e restituisce il percorso WAV
   Future<String?> stopRecording() async {
     if (!_isRecording) {
-      AppLogger.warning(_tag, 'Nessuna registrazione in corso');
       return null;
     }
 
-    AppLogger.info(_tag, 'Arresto registrazione...');
-
-    // Ferma i timer
-    _countdownTimer?.cancel();
-    _countdownTimer = null;
-    _amplitudeTimer?.cancel();
-    _amplitudeTimer = null;
-    _silenceCount = 0;
-
-    // Ferma la registrazione
     final path = await _recorder.stop();
     _isRecording = false;
 
@@ -187,8 +240,30 @@ class AudioService {
       }
     }
 
-    AppLogger.warning(_tag, 'File di registrazione non trovato');
     return _currentFilePath;
+  }
+
+  /// Se la registrazione file e' in corso
+  bool get isRecording => _isRecording;
+
+  // ============================================================
+  // CONVERSIONE AUDIO
+  // ============================================================
+
+  /// Converte byte PCM 16-bit signed little-endian in campioni float32.
+  /// Input: byte grezzi PCM 16kHz mono 16-bit.
+  /// Output: `List<double>` con valori in `[-1.0, 1.0]`.
+  List<double> _pcm16ToFloat32(Uint8List pcmBytes) {
+    final numSamples = pcmBytes.length ~/ 2;
+    final samples = List<double>.filled(numSamples, 0.0);
+    final byteData = ByteData.sublistView(pcmBytes);
+
+    for (var i = 0; i < numSamples; i++) {
+      final sample = byteData.getInt16(i * 2, Endian.little);
+      samples[i] = sample / 32768.0;
+    }
+
+    return samples;
   }
 
   /// Converte un file WAV in campioni float32 normalizzati per Whisper.
@@ -199,60 +274,43 @@ class AudioService {
 
     final file = File(wavPath);
     if (!await file.exists()) {
-      throw AudioRecordingException(
-          'File WAV non trovato: $wavPath');
+      throw AudioRecordingException('File WAV non trovato: $wavPath');
     }
 
     final bytes = await file.readAsBytes();
-    AppLogger.debug(_tag, 'File WAV letto: ${bytes.length} bytes');
 
-    // Il formato WAV ha un header di 44 bytes
-    // Verifica che sia un file WAV valido
     if (bytes.length < 44) {
       throw const AudioRecordingException(
           'File WAV troppo piccolo (header invalido)');
     }
 
     // Verifica magic "RIFF"
-    if (bytes[0] != 0x52 ||
-        bytes[1] != 0x49 ||
-        bytes[2] != 0x46 ||
-        bytes[3] != 0x46) {
+    if (bytes[0] != 0x52 || bytes[1] != 0x49 ||
+        bytes[2] != 0x46 || bytes[3] != 0x46) {
       throw const AudioRecordingException(
           'File non e\' in formato WAV (magic RIFF mancante)');
     }
 
-    // I campioni audio iniziano dopo l'header (offset 44 per WAV standard)
-    // Ogni campione 16-bit e' 2 bytes, little-endian
-    final dataOffset = 44;
-    final dataLength = bytes.length - dataOffset;
-    final numSamples = dataLength ~/ 2;
+    // I campioni audio iniziano dopo l'header di 44 bytes
+    const dataOffset = 44;
+    final pcmBytes = Uint8List.sublistView(bytes, dataOffset);
 
-    AppLogger.debug(_tag, 'Campioni audio: $numSamples');
-
-    final samples = List<double>.filled(numSamples, 0.0);
-    final byteData = ByteData.sublistView(Uint8List.fromList(bytes));
-
-    for (var i = 0; i < numSamples; i++) {
-      // Legge il campione 16-bit signed little-endian
-      final sample = byteData.getInt16(dataOffset + (i * 2), Endian.little);
-      // Normalizza a [-1.0, 1.0]
-      samples[i] = sample / 32768.0;
-    }
-
+    final samples = _pcm16ToFloat32(pcmBytes);
     AppLogger.info(_tag,
-        'Conversione completata: $numSamples campioni float32');
+        'Conversione completata: ${samples.length} campioni float32');
     return samples;
   }
 
-  /// Verifica se la registrazione e' in corso
-  bool get isRecording => _isRecording;
+  // ============================================================
+  // CLEANUP
+  // ============================================================
 
   /// Rilascia le risorse
   Future<void> dispose() async {
     AppLogger.info(_tag, 'Rilascio risorse AudioService...');
-    _countdownTimer?.cancel();
-    _amplitudeTimer?.cancel();
+    if (_isStreaming) {
+      await stopStreaming();
+    }
     if (_isRecording) {
       await _recorder.stop();
     }
@@ -260,6 +318,3 @@ class AudioService {
     AppLogger.info(_tag, 'AudioService disposed');
   }
 }
-
-/// Tipo callback senza parametri (evita import di flutter nel data layer)
-typedef OnVoidAction = void Function();
