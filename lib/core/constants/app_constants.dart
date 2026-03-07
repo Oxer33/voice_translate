@@ -20,11 +20,15 @@ const int kAudioBitDepth = 16;
 // ============================================================
 
 /// Durata di ogni chunk audio in secondi per lo streaming live
-/// Un valore di 3s offre un buon compromesso latenza/accuratezza
-const int kStreamingChunkDurationSec = 3;
+/// Un valore di 2s riduce la latenza percepita mantenendo una buona stabilita'
+const int kStreamingChunkDurationSec = 2;
 
 /// Overlap tra chunk successivi in secondi (per evitare tagli a metà parola)
 const int kStreamingOverlapSec = 1;
+
+/// Numero massimo di chunk pendenti in coda mentre il precedente e' in lavorazione
+/// Se il device e' lento, i chunk piu' vecchi vengono scartati per restare live.
+const int kMaxPendingStreamingChunks = 1;
 
 /// Durata del silenzio per pausa automatica nello streaming in secondi
 const int kStreamingSilenceThresholdSec = 3;
@@ -56,7 +60,7 @@ const int kDownloadReceiveTimeoutSec = 60;
 // ============================================================
 
 /// Numero massimo voci cronologia
-const int kMaxHistoryEntries = 20;
+const int kMaxHistoryEntries = 50;
 
 /// Timeout inattività background per scarico modelli (5 minuti)
 const int kBackgroundUnloadMinutes = 5;

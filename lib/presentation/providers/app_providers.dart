@@ -4,9 +4,9 @@ library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:voice_translate/data/repositories/history_repository.dart';
-import 'package:voice_translate/data/repositories/settings_repository.dart';
 import 'package:voice_translate/data/services/audio_service.dart';
 import 'package:voice_translate/data/services/download_service.dart';
+import 'package:voice_translate/data/repositories/settings_repository.dart';
 import 'package:voice_translate/data/services/tts_service.dart';
 import 'package:voice_translate/domain/entities/app_settings.dart';
 
@@ -51,13 +51,19 @@ final appSettingsProvider =
 /// Notifier per le impostazioni dell'app
 class AppSettingsNotifier extends StateNotifier<AppSettings> {
   final SettingsRepository _repo;
+  bool _isLoaded = false;
 
   AppSettingsNotifier(this._repo) : super(const AppSettings());
 
   /// Carica le impostazioni dal repository
   Future<void> load() async {
+    if (_isLoaded) {
+      return;
+    }
+
     await _repo.init();
     state = _repo.load();
+    _isLoaded = true;
   }
 
   /// Aggiorna le impostazioni
@@ -70,7 +76,11 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
     double? ttsSpeed,
     String? selectedWhisperModelId,
   }) async {
-    state = await _repo.update(
+    if (!_isLoaded) {
+      await load();
+    }
+
+    final updated = state.copyWith(
       showTranscription: showTranscription,
       silenceSensitivity: silenceSensitivity,
       lastSourceLanguageCode: lastSourceLanguageCode,
@@ -79,11 +89,23 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
       ttsSpeed: ttsSpeed,
       selectedWhisperModelId: selectedWhisperModelId,
     );
+
+    state = updated;
+    await _repo.save(updated);
   }
 }
 
 /// Provider per sapere se tutti i modelli sono pronti
 final modelsReadyProvider = FutureProvider<bool>((ref) async {
   final downloadService = ref.watch(downloadServiceProvider);
-  return await downloadService.areAllModelsDownloaded();
+  final settingsRepo = ref.watch(settingsRepositoryProvider);
+
+  // Carica impostazioni per sapere quale modello Whisper e' selezionato
+  await settingsRepo.init();
+  final settings = settingsRepo.load();
+  final whisperId = settings.selectedWhisperModelId;
+
+  return await downloadService.areAllModelsDownloaded(
+    whisperModelId: whisperId,
+  );
 });

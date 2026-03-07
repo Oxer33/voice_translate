@@ -3,6 +3,7 @@
 library;
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:voice_translate/core/constants/model_config.dart';
 import 'package:voice_translate/core/utils/logger.dart';
 import 'package:voice_translate/domain/entities/app_settings.dart';
 
@@ -22,11 +23,25 @@ const String _keySelectedWhisperModel = 'settings_selected_whisper_model';
 class SettingsRepository {
   /// Istanza SharedPreferences
   SharedPreferences? _prefs;
+  Future<void>? _initFuture;
 
   /// Inizializza il repository
   Future<void> init() async {
+    if (_prefs != null) {
+      return;
+    }
+
+    if (_initFuture != null) {
+      await _initFuture;
+      return;
+    }
+
     AppLogger.info(_tag, 'Inizializzazione SettingsRepository...');
-    _prefs = await SharedPreferences.getInstance();
+    _initFuture = SharedPreferences.getInstance().then((prefs) {
+      _prefs = prefs;
+    });
+    await _initFuture;
+    _initFuture = null;
     AppLogger.info(_tag, 'SettingsRepository inizializzato');
   }
 
@@ -45,8 +60,9 @@ class SettingsRepository {
           _prefs!.getString(_keyLastTargetLang) ?? 'eng_Latn',
       lastMode: _prefs!.getString(_keyLastMode) ?? 'text',
       ttsSpeed: _prefs!.getDouble(_keyTtsSpeed) ?? 1.0,
-      selectedWhisperModelId:
-          _prefs!.getString(_keySelectedWhisperModel) ?? 'small',
+      selectedWhisperModelId: normalizeWhisperModelId(
+        _prefs!.getString(_keySelectedWhisperModel),
+      ),
     );
 
     AppLogger.debug(_tag, 'Impostazioni caricate: $settings');
@@ -56,16 +72,20 @@ class SettingsRepository {
   /// Salva le impostazioni
   Future<void> save(AppSettings settings) async {
     _ensureInit();
-    AppLogger.info(_tag, 'Salvataggio impostazioni: $settings');
+    final normalizedSettings = settings.copyWith(
+      selectedWhisperModelId:
+          normalizeWhisperModelId(settings.selectedWhisperModelId),
+    );
+    AppLogger.info(_tag, 'Salvataggio impostazioni: $normalizedSettings');
 
     await Future.wait([
-      _prefs!.setBool(_keyShowTranscription, settings.showTranscription),
-      _prefs!.setDouble(_keySilenceSensitivity, settings.silenceSensitivity),
-      _prefs!.setString(_keyLastSourceLang, settings.lastSourceLanguageCode),
-      _prefs!.setString(_keyLastTargetLang, settings.lastTargetLanguageCode),
-      _prefs!.setString(_keyLastMode, settings.lastMode),
-      _prefs!.setDouble(_keyTtsSpeed, settings.ttsSpeed),
-      _prefs!.setString(_keySelectedWhisperModel, settings.selectedWhisperModelId),
+      _prefs!.setBool(_keyShowTranscription, normalizedSettings.showTranscription),
+      _prefs!.setDouble(_keySilenceSensitivity, normalizedSettings.silenceSensitivity),
+      _prefs!.setString(_keyLastSourceLang, normalizedSettings.lastSourceLanguageCode),
+      _prefs!.setString(_keyLastTargetLang, normalizedSettings.lastTargetLanguageCode),
+      _prefs!.setString(_keyLastMode, normalizedSettings.lastMode),
+      _prefs!.setDouble(_keyTtsSpeed, normalizedSettings.ttsSpeed),
+      _prefs!.setString(_keySelectedWhisperModel, normalizedSettings.selectedWhisperModelId),
     ]);
 
     AppLogger.info(_tag, 'Impostazioni salvate con successo');
@@ -81,6 +101,7 @@ class SettingsRepository {
     double? ttsSpeed,
     String? selectedWhisperModelId,
   }) async {
+    await init();
     final current = load();
     final updated = current.copyWith(
       showTranscription: showTranscription,

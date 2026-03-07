@@ -76,7 +76,7 @@ class WhisperModelConfig {
 }
 
 /// Modelli Whisper disponibili per il download
-const List<WhisperModelConfig> kWhisperModels = [
+const List<WhisperModelConfig> kAllWhisperModels = [
   // --- Whisper Tiny: velocissimo, meno accurato ---
   WhisperModelConfig(
     id: 'tiny',
@@ -171,6 +171,21 @@ const List<WhisperModelConfig> kWhisperModels = [
 /// Modello Whisper di default (Small - buon compromesso)
 const String kDefaultWhisperModelId = 'small';
 
+List<WhisperModelConfig> get kWhisperModels =>
+    kAllWhisperModels
+        .where((model) => model.id == kDefaultWhisperModelId)
+        .toList(growable: false);
+
+String normalizeWhisperModelId(String? id) {
+  final requestedId = id?.trim();
+  for (final model in kWhisperModels) {
+    if (model.id == requestedId) {
+      return model.id;
+    }
+  }
+  return kDefaultWhisperModelId;
+}
+
 /// Trova un modello Whisper per ID
 WhisperModelConfig? findWhisperModelById(String id) {
   for (final model in kWhisperModels) {
@@ -222,8 +237,9 @@ const List<ModelFileConfig> kNllbModelFiles = [
     url:
         'https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/main/tokenizer_config.json',
     fileName: 'tokenizer_config.json',
-    expectedSizeBytes: 700000, // ~700 KB
+    expectedSizeBytes: 2048,
     subFolder: 'nllb',
+    isRequired: false,
   ),
 
   // --- Config modello ---
@@ -232,10 +248,13 @@ const List<ModelFileConfig> kNllbModelFiles = [
     url:
         'https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/main/config.json',
     fileName: 'config.json',
-    expectedSizeBytes: 250000, // ~250 KB
+    expectedSizeBytes: 2048,
     subFolder: 'nllb',
   ),
 ];
+
+List<ModelFileConfig> get kRequiredNllbModelFiles =>
+    kNllbModelFiles.where((model) => model.isRequired).toList(growable: false);
 
 // ============================================================
 // LISTE AGGREGATE
@@ -244,11 +263,13 @@ const List<ModelFileConfig> kNllbModelFiles = [
 /// Tutti i file obbligatori da scaricare al primo avvio
 /// Include il modello Whisper di default + tutti i file NLLB
 List<ModelFileConfig> getRequiredModelFiles({String whisperModelId = kDefaultWhisperModelId}) {
-  final whisperModel = findWhisperModelById(whisperModelId);
+  final whisperModel = findWhisperModelById(
+    normalizeWhisperModelId(whisperModelId),
+  );
   if (whisperModel == null) {
-    return [...kNllbModelFiles];
+    return [...kRequiredNllbModelFiles];
   }
-  return [whisperModel.fileConfig, ...kNllbModelFiles];
+  return [whisperModel.fileConfig, ...kRequiredNllbModelFiles];
 }
 
 /// Tutti i file modello (per compatibilita' con il download provider)

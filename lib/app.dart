@@ -4,6 +4,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:voice_translate/core/theme/app_theme.dart';
 import 'package:voice_translate/core/utils/logger.dart';
@@ -24,6 +25,10 @@ class VoiceTranslateApp extends ConsumerStatefulWidget {
 
 class _VoiceTranslateAppState extends ConsumerState<VoiceTranslateApp>
     with WidgetsBindingObserver {
+  /// Router cached: viene creato una sola volta al primo avvio
+  /// per evitare perdita di stato navigazione su rebuild
+  GoRouter? _cachedRouter;
+
   @override
   void initState() {
     super.initState();
@@ -57,6 +62,18 @@ class _VoiceTranslateAppState extends ConsumerState<VoiceTranslateApp>
     }
   }
 
+  /// Helper per costruire il MaterialApp.router con il router cached
+  Widget _buildWithRouter() {
+    return MaterialApp.router(
+      title: 'VoiceTranslate',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.darkTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: ThemeMode.dark,
+      routerConfig: _cachedRouter!,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Verifica se i modelli sono pronti per decidere la route iniziale
@@ -65,26 +82,20 @@ class _VoiceTranslateAppState extends ConsumerState<VoiceTranslateApp>
     return modelsReady.when(
       data: (ready) {
         AppLogger.debug(_tag, 'Modelli pronti: $ready');
-        final router = createAppRouter(modelsReady: ready);
-
-        return MaterialApp.router(
-          title: 'VoiceTranslate',
-          debugShowCheckedModeBanner: false,
-
-          // Temi: scuro di default, chiaro automatico dal sistema
-          theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
-          themeMode: ThemeMode.system,
-
-          // Router
-          routerConfig: router,
-        );
+        // Crea il router SOLO la prima volta, poi riusa il cached
+        _cachedRouter ??= createAppRouter(modelsReady: ready);
+        return _buildWithRouter();
       },
       loading: () {
-        // Mostra splash screen durante il caricamento
+        // Se il router esiste gia', continuiamo a usarlo (no splash flash)
+        if (_cachedRouter != null) {
+          return _buildWithRouter();
+        }
+        // Prima volta: mostra splash screen durante il caricamento
         return MaterialApp(
           title: 'VoiceTranslate',
           debugShowCheckedModeBanner: false,
+          theme: AppTheme.darkTheme,
           darkTheme: AppTheme.darkTheme,
           themeMode: ThemeMode.dark,
           home: const _SplashScreen(),
@@ -92,9 +103,14 @@ class _VoiceTranslateAppState extends ConsumerState<VoiceTranslateApp>
       },
       error: (error, stack) {
         AppLogger.error(_tag, 'Errore inizializzazione', error, stack);
+        // Se il router esiste gia', continuiamo a usarlo
+        if (_cachedRouter != null) {
+          return _buildWithRouter();
+        }
         return MaterialApp(
           title: 'VoiceTranslate',
           debugShowCheckedModeBanner: false,
+          theme: AppTheme.darkTheme,
           darkTheme: AppTheme.darkTheme,
           themeMode: ThemeMode.dark,
           home: Scaffold(

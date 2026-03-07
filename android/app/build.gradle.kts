@@ -64,6 +64,27 @@ android {
             isShrinkResources = false
         }
     }
+
+    packaging {
+        resources {
+            excludes += setOf(
+                "native/lib/osx-aarch64/**",
+                "native/lib/osx-x86_64/**",
+                "native/lib/linux-aarch64/**",
+                "native/lib/linux-x86_64/**",
+                "native/lib/win-x86_64/**",
+            )
+        }
+    }
+}
+
+dependencies {
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.24.2")
+    implementation(platform("ai.djl:bom:0.33.0"))
+    implementation("ai.djl:api")
+    implementation("ai.djl.android:core")
+    implementation("ai.djl.huggingface:tokenizers")
+    runtimeOnly("ai.djl.android:tokenizer-native:0.33.0")
 }
 
 flutter {

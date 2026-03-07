@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:voice_translate/core/theme/app_theme.dart';
+import 'package:voice_translate/core/utils/speech_text_formatter.dart';
 import 'package:voice_translate/domain/entities/translation_entry.dart';
 
 /// Formato data/ora per la cronologia
@@ -13,21 +14,30 @@ final _dateFormat = DateFormat('dd/MM/yyyy HH:mm', 'it');
 
 /// Lista delle traduzioni nella cronologia
 class HistoryList extends StatelessWidget {
-  /// Lista delle voci della cronologia
   final List<TranslationEntry> entries;
-
-  /// Callback per eliminare una voce
   final ValueChanged<String> onDelete;
+  final int? maxItems;
 
   const HistoryList({
     super.key,
     required this.entries,
     required this.onDelete,
+    this.maxItems,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (entries.isEmpty) {
+    final filteredEntries = entries.where((entry) {
+      final rawText = sanitizeSpeechText(entry.rawText);
+      final translatedText = sanitizeSpeechText(entry.translatedText);
+      return rawText.isNotEmpty || translatedText.isNotEmpty;
+    }).toList(growable: false);
+
+    final visibleEntries = maxItems == null
+        ? filteredEntries
+        : filteredEntries.take(maxItems!).toList();
+
+    if (visibleEntries.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -58,9 +68,9 @@ class HistoryList extends StatelessWidget {
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: entries.length,
+      itemCount: visibleEntries.length,
       itemBuilder: (context, index) {
-        final entry = entries[index];
+        final entry = visibleEntries[index];
         return _HistoryTile(
           entry: entry,
           onDelete: () => onDelete(entry.id),
@@ -83,6 +93,10 @@ class _HistoryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final originalPreview = sanitizeSpeechText(entry.rawText);
+    final translatedPreview = sanitizeSpeechText(entry.translatedText);
+    final hasDistinctTranslation =
+        translatedPreview.isNotEmpty && translatedPreview != originalPreview;
 
     return Dismissible(
       key: Key(entry.id),
@@ -143,7 +157,7 @@ class _HistoryTile extends StatelessWidget {
 
               // --- Testo originale (troncato) ---
               Text(
-                entry.rawText,
+                originalPreview.isNotEmpty ? originalPreview : translatedPreview,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
@@ -152,17 +166,19 @@ class _HistoryTile extends StatelessWidget {
                 ),
               ),
 
-              const Divider(height: 16),
+              if (hasDistinctTranslation) ...[
+                const Divider(height: 16),
 
-              // --- Testo tradotto ---
-              Text(
-                entry.translatedText,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w500,
+                // --- Testo tradotto ---
+                Text(
+                  translatedPreview,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
+              ],
 
               const SizedBox(height: 8),
 
@@ -174,7 +190,7 @@ class _HistoryTile extends StatelessWidget {
                   IconButton(
                     onPressed: () {
                       Clipboard.setData(
-                          ClipboardData(text: entry.rawText));
+                          ClipboardData(text: originalPreview));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Testo originale copiato'),
@@ -194,7 +210,9 @@ class _HistoryTile extends StatelessWidget {
                   IconButton(
                     onPressed: () {
                       Clipboard.setData(
-                          ClipboardData(text: entry.translatedText));
+                          ClipboardData(text: hasDistinctTranslation
+                              ? translatedPreview
+                              : originalPreview));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Traduzione copiata'),

@@ -2,6 +2,8 @@
 /// Traccia progresso, velocità e stato di ogni singolo file.
 library;
 
+const Object _downloadStateUnset = Object();
+
 /// Stato di un singolo download
 enum DownloadStatus {
   /// In attesa di iniziare
@@ -92,7 +94,7 @@ class ModelDownloadState {
     int? totalBytes,
     int? downloadedBytes,
     double? speedBytesPerSec,
-    String? errorMessage,
+    Object? errorMessage = _downloadStateUnset,
     int? retryCount,
   }) =>
       ModelDownloadState(
@@ -102,7 +104,9 @@ class ModelDownloadState {
         totalBytes: totalBytes ?? this.totalBytes,
         downloadedBytes: downloadedBytes ?? this.downloadedBytes,
         speedBytesPerSec: speedBytesPerSec ?? this.speedBytesPerSec,
-        errorMessage: errorMessage ?? this.errorMessage,
+        errorMessage: identical(errorMessage, _downloadStateUnset)
+            ? this.errorMessage
+            : errorMessage as String?,
         retryCount: retryCount ?? this.retryCount,
       );
 
@@ -154,12 +158,14 @@ class AllDownloadsState {
     List<ModelDownloadState>? models,
     int? availableDiskSpace,
     bool? allCompleted,
-    String? globalError,
+    Object? globalError = _downloadStateUnset,
   }) =>
       AllDownloadsState(
         models: models ?? this.models,
         availableDiskSpace: availableDiskSpace ?? this.availableDiskSpace,
         allCompleted: allCompleted ?? this.allCompleted,
-        globalError: globalError ?? this.globalError,
+        globalError: identical(globalError, _downloadStateUnset)
+            ? this.globalError
+            : globalError as String?,
       );
 }

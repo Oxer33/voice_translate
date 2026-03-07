@@ -10,19 +10,43 @@ import 'package:voice_translate/core/theme/app_theme.dart';
 import 'package:voice_translate/core/utils/logger.dart';
 import 'package:voice_translate/presentation/providers/app_providers.dart';
 import 'package:voice_translate/presentation/providers/download_provider.dart';
+import 'package:voice_translate/presentation/providers/pipeline_provider.dart';
 
 /// Tag per i log di questo modulo
 const String _tag = 'SettingsScreen';
 
 /// Schermata delle impostazioni
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  double? _silenceSensitivityDraft;
+  double? _ttsSpeedDraft;
+  bool _isAdjustingSilence = false;
+  bool _isAdjustingTtsSpeed = false;
+
+  @override
+  Widget build(BuildContext context) {
     final settings = ref.watch(appSettingsProvider);
     final settingsNotifier = ref.read(appSettingsProvider.notifier);
+    final pipelineNotifier = ref.read(pipelineStateProvider.notifier);
     final theme = Theme.of(context);
+    final fixedWhisperModel = kWhisperModels.first;
+
+    if (!_isAdjustingSilence) {
+      _silenceSensitivityDraft = settings.silenceSensitivity;
+    }
+    if (!_isAdjustingTtsSpeed) {
+      _ttsSpeedDraft = settings.ttsSpeed;
+    }
+
+    final silenceSensitivityValue =
+        _silenceSensitivityDraft ?? settings.silenceSensitivity;
+    final ttsSpeedValue = _ttsSpeedDraft ?? settings.ttsSpeed;
 
     return Scaffold(
       appBar: AppBar(
@@ -41,9 +65,9 @@ class SettingsScreen extends ConsumerWidget {
           // Toggle trascrizione originale
           _buildSwitchTile(
             theme: theme,
-            title: 'Mostra trascrizione originale',
+            title: 'Mostra trascrizione completa',
             subtitle:
-                'Mostra il testo nella lingua originale oltre alla traduzione',
+                'Mantiene visibile anche il testo originale accumulato nella schermata principale',
             value: settings.showTranscription,
             onChanged: (value) {
               AppLogger.info(_tag, 'Toggle trascrizione: $value');
@@ -73,7 +97,7 @@ class SettingsScreen extends ConsumerWidget {
                           style: theme.textTheme.bodyLarge,
                         ),
                         Text(
-                          '${(settings.silenceSensitivity * 100).toStringAsFixed(0)}%',
+                          '${(silenceSensitivityValue * 100).toStringAsFixed(0)}%',
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: AppColors.primaryBlue,
                             fontWeight: FontWeight.w600,
@@ -90,13 +114,25 @@ class SettingsScreen extends ConsumerWidget {
                       ),
                     ),
                     Slider(
-                      value: settings.silenceSensitivity,
+                      value: silenceSensitivityValue,
                       min: 0.01,
                       max: 0.15,
                       divisions: 14,
                       onChanged: (value) {
-                        settingsNotifier.update(
-                            silenceSensitivity: value);
+                        setState(() {
+                          _isAdjustingSilence = true;
+                          _silenceSensitivityDraft = value;
+                        });
+                        pipelineNotifier.setSilenceSensitivity(value);
+                      },
+                      onChangeEnd: (value) async {
+                        setState(() {
+                          _isAdjustingSilence = false;
+                          _silenceSensitivityDraft = value;
+                        });
+                        await settingsNotifier.update(
+                          silenceSensitivity: value,
+                        );
                       },
                     ),
                   ],
@@ -127,7 +163,7 @@ class SettingsScreen extends ConsumerWidget {
                           style: theme.textTheme.bodyLarge,
                         ),
                         Text(
-                          '${settings.ttsSpeed.toStringAsFixed(1)}x',
+                          '${ttsSpeedValue.toStringAsFixed(1)}x',
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: AppColors.primaryBlue,
                             fontWeight: FontWeight.w600,
@@ -144,13 +180,24 @@ class SettingsScreen extends ConsumerWidget {
                       ),
                     ),
                     Slider(
-                      value: settings.ttsSpeed,
+                      value: ttsSpeedValue,
                       min: 0.5,
                       max: 2.0,
                       divisions: 15,
-                      label: '${settings.ttsSpeed.toStringAsFixed(1)}x',
+                      label: '${ttsSpeedValue.toStringAsFixed(1)}x',
                       onChanged: (value) {
-                        settingsNotifier.update(ttsSpeed: value);
+                        setState(() {
+                          _isAdjustingTtsSpeed = true;
+                          _ttsSpeedDraft = value;
+                        });
+                      },
+                      onChangeEnd: (value) async {
+                        setState(() {
+                          _isAdjustingTtsSpeed = false;
+                          _ttsSpeedDraft = value;
+                        });
+                        await settingsNotifier.update(ttsSpeed: value);
+                        await pipelineNotifier.setTtsSpeed(value);
                       },
                     ),
                     Row(
@@ -179,109 +226,62 @@ class SettingsScreen extends ConsumerWidget {
           // ========== SEZIONE: MODELLO WHISPER ==========
           _buildSectionHeader(theme, 'Modello Trascrizione (Whisper)'),
 
-          // Selezione modello Whisper con card selezionabili
-          ...kWhisperModels.map((whisperModel) {
-            final isSelected =
-                settings.selectedWhisperModelId == whisperModel.id;
-            return Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-              child: Card(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: isSelected
-                      ? const BorderSide(color: AppColors.primaryBlue, width: 2)
-                      : BorderSide.none,
-                ),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(16),
-                  onTap: () {
-                    settingsNotifier.update(
-                        selectedWhisperModelId: whisperModel.id);
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        // Icona selezione
-                        Icon(
-                          isSelected
-                              ? Icons.radio_button_checked
-                              : Icons.radio_button_unchecked,
-                          color: isSelected
-                              ? AppColors.primaryBlue
-                              : theme.colorScheme.onSurface
-                                  .withValues(alpha: 0.3),
-                        ),
-                        const SizedBox(width: 12),
-                        // Info modello
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                whisperModel.displayName,
-                                style: theme.textTheme.bodyLarge?.copyWith(
-                                  fontWeight: isSelected
-                                      ? FontWeight.w600
-                                      : FontWeight.normal,
-                                  color: isSelected
-                                      ? AppColors.primaryBlue
-                                      : null,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                whisperModel.description,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurface
-                                      .withValues(alpha: 0.5),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              // Rating velocita'/accuratezza
-                              Row(
-                                children: [
-                                  Text('Velocita\' ',
-                                      style: theme.textTheme.labelSmall),
-                                  ...List.generate(
-                                      3,
-                                      (i) => Icon(
-                                            Icons.bolt,
-                                            size: 14,
-                                            color: i < whisperModel.speedRating
-                                                ? AppColors.warning
-                                                : theme
-                                                    .colorScheme.onSurface
-                                                    .withValues(alpha: 0.15),
-                                          )),
-                                  const SizedBox(width: 12),
-                                  Text('Accuratezza ',
-                                      style: theme.textTheme.labelSmall),
-                                  ...List.generate(
-                                      3,
-                                      (i) => Icon(
-                                            Icons.star,
-                                            size: 14,
-                                            color: i <
-                                                    whisperModel.accuracyRating
-                                                ? AppColors.primaryBlue
-                                                : theme
-                                                    .colorScheme.onSurface
-                                                    .withValues(alpha: 0.15),
-                                          )),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryBlue.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(
+                        Icons.bolt_rounded,
+                        color: AppColors.primaryBlue,
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            fixedWhisperModel.displayName,
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primaryBlue,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Usiamo solo questo modello per mantenere la traduzione live piu\' veloce e stabile.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.64),
+                              height: 1.45,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            fixedWhisperModel.description,
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.58),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            );
-          }),
+            ),
+          ),
 
           const SizedBox(height: 8),
 
@@ -309,8 +309,7 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                   ),
                   trailing: IconButton(
-                    onPressed: () => _confirmRedownload(
-                        context, ref, index, config.displayName),
+                    onPressed: () => _confirmRedownload(context, config),
                     icon: const Icon(Icons.refresh, size: 20),
                     tooltip: 'Ri-scarica',
                     style: IconButton.styleFrom(
@@ -338,7 +337,7 @@ class SettingsScreen extends ConsumerWidget {
                     _buildInfoRow(theme, 'Versione app', '2.0.0'),
                     const Divider(height: 16),
                     _buildInfoRow(theme, 'Trascrizione',
-                        'Whisper Medium (1.5 GB)'),
+                        fixedWhisperModel.displayName),
                     const Divider(height: 16),
                     _buildInfoRow(theme, 'Traduzione',
                         'NLLB-200 distilled 600M'),
@@ -424,35 +423,56 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  void _confirmRedownload(
+  Future<void> _confirmRedownload(
     BuildContext context,
-    WidgetRef ref,
-    int index,
-    String modelName,
-  ) {
-    showDialog(
+    ModelFileConfig config,
+  ) async {
+    final shouldRedownload = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Ri-scarica modello'),
         content: Text(
-            'Vuoi eliminare e ri-scaricare "$modelName"?'),
+            'Vuoi eliminare e ri-scaricare "${config.displayName}"?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
+            onPressed: () => Navigator.of(ctx).pop(false),
             child: const Text('Annulla'),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              AppLogger.info(_tag, 'Ri-download modello $index');
-              ref
-                  .read(downloadStateProvider.notifier)
-                  .redownloadModel(index);
-            },
+            onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Ri-scarica'),
           ),
         ],
       ),
     );
+
+    if (shouldRedownload != true) {
+      return;
+    }
+
+    try {
+      AppLogger.info(_tag, 'Ri-download modello ${config.displayName}');
+      await ref.read(downloadStateProvider.notifier).redownloadByConfig(config);
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${config.displayName} pronto all\'uso'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    } catch (e) {
+      AppLogger.error(_tag, 'Errore ri-download ${config.displayName}', e);
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Errore ri-download ${config.displayName}'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
 }

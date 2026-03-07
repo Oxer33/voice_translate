@@ -5,6 +5,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -93,7 +94,18 @@ class DownloadService {
       AppLogger.debug(_tag, 'File non trovato: $filePath');
       return false;
     }
+
     final fileSize = await file.length();
+
+    if (config.expectedSizeBytes <= 64 * 1024) {
+      final isValid = await _isSmallMetadataFileValid(file, fileSize);
+      AppLogger.debug(
+        _tag,
+        'File metadata ${config.fileName}: $fileSize bytes, valido: $isValid',
+      );
+      return isValid;
+    }
+
     // Controlla che la dimensione sia ragionevole (almeno 90% della dimensione attesa)
     final minExpectedSize = (config.expectedSizeBytes * 0.9).toInt();
     final isValid = fileSize >= minExpectedSize;
@@ -102,17 +114,44 @@ class DownloadService {
     return isValid;
   }
 
-  /// Verifica se tutti i modelli sono stati scaricati
-  Future<bool> areAllModelsDownloaded() async {
-    AppLogger.info(_tag, 'Verifica completezza modelli...');
-    for (final config in kModelFiles) {
+  /// Verifica se tutti i modelli OBBLIGATORI per un dato modello Whisper
+  /// sono scaricati. Questo include:
+  /// - NLLB-200 (sempre obbligatori)
+  /// - Il modello Whisper selezionato (passato da whisperModelId)
+  Future<bool> areAllModelsDownloaded({
+    String whisperModelId = kDefaultWhisperModelId,
+  }) async {
+    AppLogger.info(
+        _tag, 'Verifica completezza modelli per whisper=$whisperModelId...');
+
+    final requiredModels = getRequiredModelFiles(whisperModelId: whisperModelId);
+
+    for (final config in requiredModels) {
       if (!await isModelDownloaded(config)) {
         AppLogger.info(_tag, 'Modello mancante: ${config.displayName}');
         return false;
       }
     }
-    AppLogger.info(_tag, 'Tutti i modelli sono presenti');
+    AppLogger.info(_tag, 'Tutti i modelli richiesti sono presenti');
     return true;
+  }
+
+  Future<bool> _isSmallMetadataFileValid(File file, int fileSize) async {
+    if (fileSize < 64) {
+      return false;
+    }
+
+    try {
+      final previewBytes = await file.openRead(0, 1024).fold<List<int>>(
+        <int>[],
+        (buffer, chunk) => buffer..addAll(chunk),
+      );
+      final preview = utf8.decode(previewBytes, allowMalformed: true).trimLeft();
+      return preview.startsWith('{') || preview.startsWith('[');
+    } catch (e) {
+      AppLogger.warning(_tag, 'Impossibile validare metadata file ${file.path}: $e');
+      return false;
+    }
   }
 
   /// Verifica lo spazio disponibile su disco
@@ -332,6 +371,18 @@ class DownloadService {
               actualHash: 'non corrispondente',
             );
           }
+        }
+
+        final isDownloaded = await isModelDownloaded(config);
+        if (!isDownloaded) {
+          if (await file.exists()) {
+            await file.delete();
+          }
+          throw ModelDownloadException(
+            'Il file scaricato non supera la verifica finale di integrita\'.',
+            modelName: config.displayName,
+            downloadedBytes: finalSize,
+          );
         }
 
         onStatus(modelIndex, DownloadStatus.completed, null);

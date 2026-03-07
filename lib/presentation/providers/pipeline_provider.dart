@@ -8,6 +8,7 @@ library;
 
 import 'dart:async';
 import 'dart:collection';
+import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -16,6 +17,7 @@ import 'package:voice_translate/core/constants/app_constants.dart';
 import 'package:voice_translate/core/constants/languages.dart';
 import 'package:voice_translate/core/constants/model_config.dart';
 import 'package:voice_translate/core/utils/logger.dart';
+import 'package:voice_translate/core/utils/speech_text_formatter.dart';
 import 'package:voice_translate/data/datasources/onnx_ffi.dart';
 import 'package:voice_translate/data/datasources/whisper_ffi.dart';
 import 'package:voice_translate/data/repositories/history_repository.dart';
@@ -65,6 +67,9 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
   /// ID del modello Whisper selezionato
   String _selectedWhisperModelId = kDefaultWhisperModelId;
 
+  /// Sensibilita' del filtro silenzio per saltare chunk senza parlato utile
+  double _silenceSensitivity = kDefaultSilenceSensitivity;
+
   /// Se lo streaming e' attivo
   bool _streamingActive = false;
 
@@ -99,19 +104,141 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
   void setTargetLanguage(SupportedLanguage lang) {
     AppLogger.info(_tag, 'Lingua target: ${lang.nameIt}');
     _targetLanguage = lang;
-    _ttsService.setLanguage(lang.nllbCode);
+    unawaited(
+      _ttsService.setLanguage(lang.nllbCode).catchError((Object error, StackTrace _) {
+        AppLogger.warning(_tag, 'Aggiornamento lingua TTS non riuscito: $error');
+      }),
+    );
   }
 
   /// Cambia la modalita' dell'app (TEXT o SPEECH)
   void setMode(AppMode mode) {
     AppLogger.info(_tag, 'Modalita\': ${modeDisplayName(mode)}');
+    if (state.mode == AppMode.speech && mode == AppMode.text) {
+      unawaited(_ttsService.stop());
+    }
     state = state.copyWith(mode: mode);
   }
 
   /// Imposta il modello Whisper da usare
   void setWhisperModel(String modelId) {
-    AppLogger.info(_tag, 'Modello Whisper: $modelId');
-    _selectedWhisperModelId = modelId;
+    final normalizedModelId = normalizeWhisperModelId(modelId);
+    AppLogger.info(_tag, 'Modello Whisper: $normalizedModelId');
+    _selectedWhisperModelId = normalizedModelId;
+  }
+
+  void setSilenceSensitivity(double value) {
+    _silenceSensitivity = value.clamp(0.01, 0.2);
+    AppLogger.debug(_tag, 'Sensibilita\' silenzio aggiornata: $_silenceSensitivity');
+  }
+
+  Future<void> setTtsSpeed(double speed) async {
+    if (!_streamingActive || state.mode != AppMode.speech) {
+      return;
+    }
+
+    try {
+      await _ttsService.setSpeed(speed);
+    } catch (e) {
+      AppLogger.warning(_tag, 'Aggiornamento velocita\' TTS non riuscito: $e');
+    }
+  }
+
+  bool _isBelowSilenceThreshold(List<double> samples) {
+    if (samples.isEmpty) {
+      return true;
+    }
+
+    var peak = 0.0;
+    var sumSquares = 0.0;
+    for (final sample in samples) {
+      final absSample = sample.abs();
+      if (absSample > peak) {
+        peak = absSample;
+      }
+      sumSquares += sample * sample;
+    }
+
+    final rms = math.sqrt(sumSquares / samples.length);
+    final threshold = _silenceSensitivity;
+    return peak < threshold && rms < threshold * 0.45;
+  }
+
+  String _resolveSourceLanguageCode(String detectedLang) {
+    if (_sourceLanguage.nllbCode == 'auto' && detectedLang.isNotEmpty) {
+      final detected = findLanguageByWhisperCode(detectedLang);
+      return detected?.nllbCode ?? 'eng_Latn';
+    }
+
+    return _sourceLanguage.nllbCode;
+  }
+
+  bool _requiresTranslationModelValidation() {
+    return _sourceLanguage.nllbCode == 'auto' ||
+        _sourceLanguage.nllbCode != _targetLanguage.nllbCode;
+  }
+
+  Future<String?> _validateStreamingSetup() async {
+    final whisperModel = findWhisperModelById(_selectedWhisperModelId);
+    if (whisperModel == null) {
+      return 'Il modello Whisper selezionato non e\' valido.';
+    }
+
+    final whisperReady =
+        await _downloadService.isModelDownloaded(whisperModel.fileConfig);
+    if (!whisperReady) {
+      return 'Il modello ${whisperModel.displayName} non e\' scaricato. Apri il download modelli e completa il setup.';
+    }
+
+    final whisperModelPath =
+        await _downloadService.getModelFilePath(whisperModel.fileConfig);
+    // Validazione asincrona in Isolate: pre-carica il modello senza bloccare la UI
+    final whisperValidationError = await WhisperFFI.validateModelInIsolate(
+      libraryPath: 'libvoice_translate_whisper.so',
+      modelPath: whisperModelPath,
+    );
+    if (whisperValidationError != null) {
+      return whisperValidationError;
+    }
+
+    if (_requiresTranslationModelValidation()) {
+      for (final config in kRequiredNllbModelFiles) {
+        final isReady = await _downloadService.isModelDownloaded(config);
+        if (!isReady) {
+          return 'Manca il modello obbligatorio ${config.displayName}. Apri il download modelli e completa il setup.';
+        }
+      }
+
+      final modelsPath = await _downloadService.getModelsBasePath();
+      final backendError = await OnnxFFI.validateNativeBackend(
+        modelDir: '$modelsPath/nllb',
+      );
+      if (backendError != null) {
+        return backendError;
+      }
+    }
+
+    return null;
+  }
+
+  Future<void> _setCriticalError(String message) async {
+    AppLogger.warning(_tag, 'Errore critico pipeline: $message');
+    _streamingActive = false;
+    _isProcessingChunk = false;
+    _chunkQueue.clear();
+
+    if (_audioService.isStreaming) {
+      await _audioService.stopStreaming();
+    }
+    await _ttsService.stop();
+
+    if (mounted) {
+      state = state.copyWith(
+        phase: PipelinePhase.error,
+        isStreaming: false,
+        errorMessage: message,
+      );
+    }
   }
 
   // ============================================================
@@ -129,7 +256,7 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
   /// Il microfono cattura audio in continuo tramite startStream().
   /// Ogni ~3 secondi di audio accumulato viene processato (trascritto + tradotto).
   /// NON ci sono gap: il microfono resta sempre acceso.
-  Future<void> startStreaming() async {
+  Future<void> startStreaming({double ttsSpeed = 1.0}) async {
     if (_streamingActive) {
       AppLogger.warning(_tag, 'Streaming gia\' attivo');
       return;
@@ -137,12 +264,18 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
 
     AppLogger.info(_tag, '=== AVVIO STREAMING LIVE ===');
 
+    final validationError = await _validateStreamingSetup();
+    if (validationError != null) {
+      await _setCriticalError(validationError);
+      return;
+    }
+
     // Inizializza TTS per la modalita' speech
     if (state.mode == AppMode.speech) {
       try {
         await _ttsService.init(
           languageCode: _targetLanguage.nllbCode,
-          speed: 1.0,
+          speed: ttsSpeed,
         );
       } catch (e) {
         AppLogger.error(_tag, 'Errore init TTS (continuiamo senza)', e);
@@ -189,6 +322,14 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
         'Chunk audio ricevuto: ${samples.length} campioni '
         '(${(samples.length / kAudioSampleRate).toStringAsFixed(1)}s)');
 
+    while (_chunkQueue.length >= kMaxPendingStreamingChunks) {
+      _chunkQueue.removeFirst();
+      AppLogger.warning(
+        _tag,
+        'Coda streaming in ritardo: scarto chunk vecchio per restare live',
+      );
+    }
+
     // Aggiungi alla coda
     _chunkQueue.add(samples);
 
@@ -219,16 +360,29 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
         return;
       }
 
+      if (_isBelowSilenceThreshold(samples)) {
+        AppLogger.debug(_tag, 'Chunk sotto soglia silenzio, skip');
+        _isProcessingChunk = false;
+        if (mounted && _streamingActive) {
+          state = state.copyWith(phase: PipelinePhase.listening);
+        }
+        _processNextChunk();
+        return;
+      }
+
       // --- FASE 1: TRASCRIZIONE con Whisper ---
       if (mounted) {
         state = state.copyWith(phase: PipelinePhase.transcribing);
       }
 
-      final modelsPath = await _downloadService.getModelsBasePath();
       final whisperModel = findWhisperModelById(_selectedWhisperModelId);
-      final whisperFileName =
-          whisperModel?.fileConfig.fileName ?? 'ggml-small.bin';
-      final whisperModelPath = '$modelsPath/whisper/$whisperFileName';
+      if (whisperModel == null) {
+        await _setCriticalError('Il modello Whisper selezionato non e\' valido.');
+        return;
+      }
+      final whisperModelPath =
+          await _downloadService.getModelFilePath(whisperModel.fileConfig);
+      final modelsPath = await _downloadService.getModelsBasePath();
 
       final langCode = _sourceLanguage.nllbCode == 'auto'
           ? null
@@ -239,12 +393,12 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
 
       try {
         final transcription = await WhisperFFI.transcribeInIsolate(
-          libraryPath: 'libwhisper.so',
+          libraryPath: 'libvoice_translate_whisper.so',
           modelPath: whisperModelPath,
           audioSamples: samples,
           languageCode: langCode,
         );
-        transcribedText = transcription.text.trim();
+        transcribedText = sanitizeSpeechText(transcription.text);
         detectedLang = transcription.detectedLanguage;
       } catch (e) {
         // Se Whisper FFI fallisce (libreria non disponibile), mostra errore chiaro
@@ -254,18 +408,16 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
         if (errorMsg.contains('Failed to lookup') ||
             errorMsg.contains('Failed to load') ||
             errorMsg.contains('dlopen')) {
-          // Libreria nativa non trovata - errore critico
-          if (mounted) {
-            state = state.copyWith(
-              phase: PipelinePhase.error,
-              errorMessage:
-                  'Libreria whisper.cpp non trovata. '
-                  'Le librerie native (libwhisper.so) devono essere compilate '
-                  'con Android NDK e incluse nell\'APK. '
-                  'Consulta il README per le istruzioni di build.',
-            );
-          }
-          _isProcessingChunk = false;
+          await _setCriticalError(
+            'Libreria whisper.cpp non trovata. Le librerie native Whisper devono essere compilate con Android NDK e incluse nell\'APK.',
+          );
+          return;
+        }
+
+        if (errorMsg.contains('restituito errore: -2')) {
+          await _setCriticalError(
+            'Il modello Whisper selezionato non e\' caricabile. Probabilmente manca o e\' corrotto. Apri il download modelli e riscaricalo.',
+          );
           return;
         }
 
@@ -282,7 +434,7 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
 
       // Se la trascrizione e' vuota, skip
       if (transcribedText.isEmpty) {
-        AppLogger.debug(_tag, 'Trascrizione vuota, skip');
+        AppLogger.debug(_tag, 'Trascrizione vuota o non verbale, skip');
         _isProcessingChunk = false;
         if (mounted && _streamingActive) {
           state = state.copyWith(phase: PipelinePhase.listening);
@@ -300,68 +452,61 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
         );
       }
 
-      // --- FASE 2: TRADUZIONE con NLLB-200 ---
-      if (mounted) {
-        state = state.copyWith(phase: PipelinePhase.translating);
-      }
+      final srcLangCode = _resolveSourceLanguageCode(detectedLang);
+      final shouldTranslate = srcLangCode != _targetLanguage.nllbCode;
+      var outputText = transcribedText;
 
-      final nllbModelDir = '$modelsPath/nllb';
+      if (shouldTranslate) {
+        if (mounted) {
+          state = state.copyWith(phase: PipelinePhase.translating);
+        }
 
-      // Determina lingua sorgente per NLLB
-      String srcLangCode;
-      if (_sourceLanguage.nllbCode == 'auto' && detectedLang.isNotEmpty) {
-        final detected = findLanguageByWhisperCode(detectedLang);
-        srcLangCode = detected?.nllbCode ?? 'eng_Latn';
-      } else {
-        srcLangCode = _sourceLanguage.nllbCode;
-      }
+        final nllbModelDir = '$modelsPath/nllb';
 
-      String translatedText;
+        try {
+          outputText = await OnnxFFI.translateInIsolate(
+            modelDir: nllbModelDir,
+            inputText: transcribedText,
+            sourceLanguageCode: srcLangCode,
+            targetLanguageCode: _targetLanguage.nllbCode,
+          );
+        } catch (e) {
+          final errorMsg = e.toString();
+          AppLogger.error(_tag, 'Errore ONNX FFI', e);
 
-      try {
-        translatedText = await OnnxFFI.translateInIsolate(
-          libraryPath: 'libonnxruntime.so',
-          modelDir: nllbModelDir,
-          inputText: transcribedText,
-          sourceLanguageCode: srcLangCode,
-          targetLanguageCode: _targetLanguage.nllbCode,
-        );
-      } catch (e) {
-        final errorMsg = e.toString();
-        AppLogger.error(_tag, 'Errore ONNX FFI', e);
+          if (errorMsg.contains('supportata solo su Android') ||
+              errorMsg.contains('Backend NLLB non disponibile') ||
+              errorMsg.contains('backend NLLB')) {
+            await _setCriticalError(
+              'Backend traduzione NLLB non disponibile o non inizializzabile in questa build.',
+            );
+            return;
+          }
 
-        if (errorMsg.contains('Failed to lookup') ||
-            errorMsg.contains('Failed to load') ||
-            errorMsg.contains('dlopen')) {
           if (mounted) {
             state = state.copyWith(
               phase: PipelinePhase.error,
-              errorMessage:
-                  'Libreria ONNX Runtime non trovata. '
-                  'libonnxruntime.so deve essere compilata e inclusa nell\'APK. '
-                  'Consulta il README per le istruzioni di build.',
+              errorMessage: 'Errore traduzione: ${e.toString().substring(0, (e.toString().length).clamp(0, 150))}',
             );
           }
           _isProcessingChunk = false;
           return;
         }
 
-        if (mounted) {
-          state = state.copyWith(
-            phase: PipelinePhase.error,
-            errorMessage: 'Errore traduzione: ${e.toString().substring(0, (e.toString().length).clamp(0, 150))}',
-          );
+        outputText = sanitizeSpeechText(outputText);
+        if (outputText.isEmpty) {
+          outputText = transcribedText;
         }
-        _isProcessingChunk = false;
-        return;
-      }
 
-      AppLogger.info(_tag, 'Tradotto: "$translatedText"');
+        AppLogger.info(_tag, 'Tradotto: "$outputText"');
+      } else {
+        AppLogger.info(_tag, 'Lingua target uguale alla sorgente, salto traduzione NLLB');
+      }
 
       // Aggiungi il segmento alla lista
       final segment = TranslatedSegment(
         transcribedText: transcribedText,
-        translatedText: translatedText,
+        translatedText: outputText,
         timestamp: DateTime.now(),
       );
 
@@ -371,24 +516,18 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
         state = state.copyWith(
           segments: updatedSegments,
           currentTranscription: transcribedText,
-          currentTranslation: translatedText,
+          currentTranslation: outputText,
           phase: PipelinePhase.listening,
         );
       }
 
       // --- FASE 3: TTS (solo modalita' speech) ---
-      if (state.mode == AppMode.speech && translatedText.isNotEmpty) {
-        if (mounted) {
-          state = state.copyWith(phase: PipelinePhase.speaking);
-        }
-        try {
-          await _ttsService.speak(translatedText);
-        } catch (e) {
-          AppLogger.error(_tag, 'Errore TTS (continuiamo)', e);
-        }
-        if (mounted && _streamingActive) {
-          state = state.copyWith(phase: PipelinePhase.listening);
-        }
+      if (state.mode == AppMode.speech && outputText.isNotEmpty) {
+        unawaited(
+          _ttsService.speakAsync(outputText).catchError((Object e, StackTrace _) {
+            AppLogger.error(_tag, 'Errore TTS in coda (continuiamo)', e);
+          }),
+        );
       }
     } catch (e) {
       AppLogger.error(_tag, 'Errore processamento chunk', e);
@@ -465,15 +604,24 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
       }
     }
 
+    final hasDistinctTarget = srcLangCode != _targetLanguage.nllbCode;
+    final rawText = sanitizeSpeechText(state.fullTranscription);
+    final translatedText = sanitizeSpeechText(state.fullTranslation);
+
+    if (rawText.isEmpty && translatedText.isEmpty) {
+      AppLogger.info(_tag, 'Cronologia skip: nessun testo utile dopo pulizia');
+      return;
+    }
+
     final entry = TranslationEntry(
       id: _uuid.v4(),
       timestamp: DateTime.now(),
       sourceLanguageCode: srcLangCode,
-      targetLanguageCode: _targetLanguage.nllbCode,
+      targetLanguageCode: hasDistinctTarget ? _targetLanguage.nllbCode : srcLangCode,
       sourceLanguageName: srcLangName,
-      targetLanguageName: _targetLanguage.nameIt,
-      rawText: state.fullTranscription,
-      translatedText: state.fullTranslation,
+      targetLanguageName: hasDistinctTarget ? _targetLanguage.nameIt : srcLangName,
+      rawText: rawText,
+      translatedText: translatedText.isNotEmpty ? translatedText : rawText,
     );
 
     try {

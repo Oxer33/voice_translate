@@ -36,35 +36,44 @@ class LanguageSelector extends StatelessWidget {
       onTap: () => _showLanguagePicker(context),
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        constraints: const BoxConstraints(minHeight: 84),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           border: Border.all(color: theme.colorScheme.outline),
           borderRadius: BorderRadius.circular(12),
         ),
-        child: Row(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Label
             Text(
               label,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(width: 12),
-            // Lingua selezionata
-            Expanded(
-              child: Text(
-                selectedLanguage.nameIt,
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  fontWeight: FontWeight.w500,
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    selectedLanguage.nameIt,
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                  ),
                 ),
-                textAlign: TextAlign.end,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Icon(
-              Icons.keyboard_arrow_down,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.keyboard_arrow_down,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                ),
+              ],
             ),
           ],
         ),
@@ -228,6 +237,8 @@ class _LanguagePickerSheetState extends State<_LanguagePickerSheet> {
           fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
           color: isSelected ? AppColors.primaryBlue : null,
         ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
       subtitle: language.nllbCode != 'auto'
           ? Text(
@@ -235,6 +246,8 @@ class _LanguagePickerSheetState extends State<_LanguagePickerSheet> {
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             )
           : null,
       trailing: isSelected

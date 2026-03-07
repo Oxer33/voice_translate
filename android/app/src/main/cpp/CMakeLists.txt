@@ -30,55 +30,51 @@ add_compile_options(-fPIC -pthread)
 set(WHISPER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/whisper_cpp)
 
 # Verifica che la cartella esista
-if(EXISTS ${WHISPER_DIR}/whisper.cpp)
+if(EXISTS ${WHISPER_DIR}/CMakeLists.txt)
     message(STATUS "VoiceTranslate: Trovato whisper.cpp in ${WHISPER_DIR}")
 
-    # Sorgenti ggml (backend di whisper.cpp)
-    set(WHISPER_GGML_SOURCES
-        ${WHISPER_DIR}/ggml/src/ggml.c
-        ${WHISPER_DIR}/ggml/src/ggml-alloc.c
-        ${WHISPER_DIR}/ggml/src/ggml-backend.c
-        ${WHISPER_DIR}/ggml/src/ggml-quants.c
-        ${WHISPER_DIR}/ggml/src/ggml-aarch64.c
-    )
+    set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+    set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+    set(WHISPER_USE_SYSTEM_GGML OFF CACHE BOOL "" FORCE)
 
-    # Sorgenti whisper
-    set(WHISPER_SOURCES
-        ${WHISPER_DIR}/src/whisper.cpp
-    )
+    add_subdirectory(${WHISPER_DIR} ${CMAKE_CURRENT_BINARY_DIR}/whisper_cpp)
 
-    # Crea la libreria condivisa libwhisper.so
-    add_library(whisper SHARED
-        ${WHISPER_GGML_SOURCES}
-        ${WHISPER_SOURCES}
-    )
+    if(NOT TARGET whisper)
+        message(FATAL_ERROR "VoiceTranslate: target whisper non generato dal progetto whisper.cpp")
+    endif()
 
-    target_include_directories(whisper PUBLIC
-        ${WHISPER_DIR}/include
-        ${WHISPER_DIR}/ggml/include
-        ${WHISPER_DIR}/ggml/src
-        ${WHISPER_DIR}/src
-    )
-
-    target_compile_definitions(whisper PRIVATE
-        GGML_USE_NEON
-        WHISPER_SHARED
-        WHISPER_BUILD
-    )
-
-    target_link_libraries(whisper
+    target_link_libraries(whisper PRIVATE
         android
         log
         m
     )
 
-    # Esporta i simboli necessari per FFI
+    add_library(voice_translate_whisper SHARED
+        ${CMAKE_CURRENT_SOURCE_DIR}/voice_translate_whisper_wrapper.cpp
+    )
+
+    target_include_directories(voice_translate_whisper PRIVATE
+        ${WHISPER_DIR}/include
+    )
+
+    target_link_libraries(voice_translate_whisper PRIVATE
+        whisper
+        android
+        log
+        m
+    )
+
     set_target_properties(whisper PROPERTIES
         LINK_FLAGS "-Wl,--no-undefined"
     )
+
+    set_target_properties(voice_translate_whisper PROPERTIES
+        LINK_FLAGS "-Wl,--no-undefined"
+    )
 else()
-    message(WARNING "VoiceTranslate: whisper.cpp NON trovato in ${WHISPER_DIR}")
-    message(WARNING "Esegui: git clone https://github.com/ggerganov/whisper.cpp ${WHISPER_DIR}")
+    message(FATAL_ERROR "VoiceTranslate: whisper.cpp NON trovato in ${WHISPER_DIR}")
 endif()
 
 # ============================================================

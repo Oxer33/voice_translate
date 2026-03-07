@@ -18,9 +18,8 @@ import 'package:voice_translate/presentation/providers/pipeline_provider.dart';
 import 'package:voice_translate/presentation/router/app_router.dart';
 import 'package:voice_translate/presentation/widgets/history_list.dart';
 import 'package:voice_translate/presentation/widgets/language_selector.dart';
-import 'package:voice_translate/presentation/widgets/phase_indicator.dart';
+import 'package:voice_translate/presentation/widgets/live_results_panel.dart';
 import 'package:voice_translate/presentation/widgets/recording_button.dart';
-import 'package:voice_translate/presentation/widgets/text_result_card.dart';
 
 /// Tag per i log di questo modulo
 const String _tag = 'HomeScreen';
@@ -43,7 +42,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   /// Inizializza permessi e carica cronologia
   Future<void> _initPermissionsAndHistory() async {
-    await PermissionsHelper.requestMicrophonePermission();
     ref.read(historyListProvider.notifier).load();
     await ref.read(appSettingsProvider.notifier).load();
 
@@ -67,6 +65,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         settings.lastMode == 'speech' ? AppMode.speech : AppMode.text;
     pipeline.setMode(mode);
 
+    pipeline.setSilenceSensitivity(settings.silenceSensitivity);
+
     // Ripristina modello Whisper selezionato
     pipeline.setWhisperModel(settings.selectedWhisperModelId);
   }
@@ -82,6 +82,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       await pipeline.stopStreaming();
       ref.read(historyListProvider.notifier).refresh();
     } else {
+      final settings = ref.read(appSettingsProvider);
+      final modelsReady = await ref.read(downloadServiceProvider).areAllModelsDownloaded(
+            whisperModelId: settings.selectedWhisperModelId,
+          );
+      if (!modelsReady) {
+        AppLogger.warning(_tag, 'Modelli mancanti: apro schermata download');
+        if (mounted) {
+          context.go(AppRoutes.download);
+        }
+        return;
+      }
+
       // Verifica permesso microfono
       final hasPermission =
           await PermissionsHelper.isMicrophoneGranted();
@@ -104,7 +116,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       // Avvia streaming
       AppLogger.info(_tag, 'Avvio streaming da pulsante');
       pipeline.reset();
-      await pipeline.startStreaming();
+      await pipeline.startStreaming(ttsSpeed: ref.read(appSettingsProvider).ttsSpeed);
     }
   }
 
@@ -120,6 +132,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       appBar: AppBar(
         title: const Text('VoiceTranslate'),
         actions: [
+          IconButton(
+            onPressed: () => context.push(AppRoutes.history),
+            icon: const Icon(Icons.history_rounded),
+            tooltip: 'Cronologia chat',
+          ),
           IconButton(
             onPressed: () => context.push(AppRoutes.settings),
             icon: const Icon(Icons.settings_outlined),
@@ -167,27 +184,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       showAutoDetect: true,
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: IconButton(
-                      onPressed: () {
-                        final src = pipeline.sourceLanguage;
-                        final tgt = pipeline.targetLanguage;
-                        if (src.nllbCode == 'auto') return;
-                        pipeline.setSourceLanguage(tgt);
-                        pipeline.setTargetLanguage(src);
-                        ref.read(appSettingsProvider.notifier).update(
-                              lastSourceLanguageCode: tgt.nllbCode,
-                              lastTargetLanguageCode: src.nllbCode,
-                            );
-                      },
-                      icon: const Icon(Icons.swap_horiz),
-                      tooltip: 'Scambia lingue',
-                      style: IconButton.styleFrom(
-                        foregroundColor: AppColors.primaryBlue,
-                      ),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    onPressed: () {
+                      final src = pipeline.sourceLanguage;
+                      final tgt = pipeline.targetLanguage;
+                      if (src.nllbCode == 'auto') return;
+                      pipeline.setSourceLanguage(tgt);
+                      pipeline.setTargetLanguage(src);
+                      ref.read(appSettingsProvider.notifier).update(
+                            lastSourceLanguageCode: tgt.nllbCode,
+                            lastTargetLanguageCode: src.nllbCode,
+                          );
+                    },
+                    icon: const Icon(Icons.swap_horiz),
+                    tooltip: 'Scambia lingue',
+                    iconSize: 22,
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 36,
+                      height: 36,
+                    ),
+                    style: IconButton.styleFrom(
+                      foregroundColor: AppColors.primaryBlue,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                   ),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: LanguageSelector(
                       label: 'A',
@@ -217,36 +241,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
             const SizedBox(height: 16),
 
-            // --- Indicatore fase corrente ---
-            PhaseIndicator(phase: pipelineState.phase),
-
-            const SizedBox(height: 16),
-
             // --- Area risultati live ---
-            // Traduzione corrente (grande, in evidenza)
-            if (pipelineState.currentTranslation != null)
-              TextResultCard(
-                title: 'Traduzione',
-                text: pipelineState.currentTranslation,
-                icon: Icons.translate,
-              ),
-
-            // Trascrizione corrente (piccola, opzionale)
-            if (settings.showTranscription &&
-                pipelineState.currentTranscription != null)
-              TextResultCard(
-                title: 'Trascrizione originale',
-                text: pipelineState.currentTranscription,
-                icon: Icons.text_fields,
-              ),
-
-            // --- Testo completo accumulato ---
-            if (pipelineState.segments.length > 1)
-              TextResultCard(
-                title: 'Traduzione completa',
-                text: pipelineState.fullTranslation,
-                icon: Icons.list_alt,
-              ),
+            LiveResultsPanel(
+              pipelineState: pipelineState,
+              showFullTranscription: settings.showTranscription,
+            ),
 
             // --- Errore ---
             if (pipelineState.phase == PipelinePhase.error &&
@@ -308,12 +307,83 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       ),
                     ),
                   ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () => context.push(AppRoutes.history),
+                    icon: const Icon(Icons.forum_rounded, size: 18),
+                    label: Text(history.isEmpty ? 'Apri' : 'Apri tutto'),
+                  ),
                 ],
               ),
             ),
             const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      AppColors.primaryBlue.withValues(alpha: 0.12),
+                      AppColors.accentPurple.withValues(alpha: 0.12),
+                      AppColors.accentCyan.withValues(alpha: 0.08),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: theme.colorScheme.outline.withValues(alpha: 0.18),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(
+                        Icons.auto_awesome_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Nuova lettura in stile chat',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Anteprima rapida qui sotto. Per leggere comodamente testi lunghi, apri la cronologia completa.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.68),
+                              height: 1.45,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
             HistoryList(
               entries: history,
+              maxItems: 3,
               onDelete: (id) {
                 ref.read(historyListProvider.notifier).delete(id);
               },

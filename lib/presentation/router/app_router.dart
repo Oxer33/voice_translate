@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:voice_translate/presentation/screens/download_screen.dart';
 import 'package:voice_translate/presentation/screens/error_screen.dart';
+import 'package:voice_translate/presentation/screens/history_screen.dart';
 import 'package:voice_translate/presentation/screens/home_screen.dart';
 import 'package:voice_translate/presentation/screens/settings_screen.dart';
 
@@ -15,6 +16,7 @@ class AppRoutes {
 
   static const String download = '/download';
   static const String home = '/home';
+  static const String history = '/history';
   static const String settings = '/settings';
   static const String error = '/error';
 }
@@ -43,6 +45,27 @@ GoRouter createAppRouter({required bool modelsReady}) {
           child: const HomeScreen(),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return FadeTransition(opacity: animation, child: child);
+          },
+        ),
+      ),
+      GoRoute(
+        path: AppRoutes.history,
+        name: 'history',
+        pageBuilder: (context, state) => CustomTransitionPage(
+          key: state.pageKey,
+          child: const HistoryScreen(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            const begin = Offset(0.0, 0.04);
+            const end = Offset.zero;
+            final tween = Tween(begin: begin, end: end)
+                .chain(CurveTween(curve: Curves.easeOutCubic));
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: animation.drive(tween),
+                child: child,
+              ),
+            );
           },
         ),
       ),

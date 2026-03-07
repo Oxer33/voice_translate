@@ -20,12 +20,20 @@ class TextResultCard extends StatelessWidget {
   /// Se la card e' visibile
   final bool visible;
 
+  /// Colore principale della card
+  final Color accentColor;
+
+  /// Colore di sfondo opzionale della card
+  final Color? backgroundColor;
+
   const TextResultCard({
     super.key,
     required this.title,
     required this.text,
     required this.icon,
     this.visible = true,
+    this.accentColor = AppColors.primaryBlue,
+    this.backgroundColor,
   });
 
   @override
@@ -38,6 +46,13 @@ class TextResultCard extends StatelessWidget {
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: backgroundColor ?? accentColor.withValues(alpha: 0.1),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: accentColor.withValues(alpha: 0.28),
+        ),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -46,12 +61,12 @@ class TextResultCard extends StatelessWidget {
             // --- Header con titolo e pulsante copia ---
             Row(
               children: [
-                Icon(icon, size: 18, color: AppColors.primaryBlue),
+                Icon(icon, size: 18, color: accentColor),
                 const SizedBox(width: 8),
                 Text(
                   title,
                   style: theme.textTheme.labelLarge?.copyWith(
-                    color: AppColors.primaryBlue,
+                    color: accentColor,
                     fontWeight: FontWeight.w600,
                   ),
                 ),

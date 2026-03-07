@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'package:voice_translate/core/theme/app_theme.dart';
 import 'package:voice_translate/core/utils/logger.dart';
 import 'package:voice_translate/domain/entities/download_state.dart';
+import 'package:voice_translate/presentation/providers/app_providers.dart';
 import 'package:voice_translate/presentation/providers/download_provider.dart';
 import 'package:voice_translate/presentation/router/app_router.dart';
 import 'package:voice_translate/presentation/widgets/download_progress_card.dart';
@@ -26,6 +27,8 @@ class DownloadScreen extends ConsumerStatefulWidget {
 }
 
 class _DownloadScreenState extends ConsumerState<DownloadScreen> {
+  bool _isNavigatingToHome = false;
+
   @override
   void initState() {
     super.initState();
@@ -36,21 +39,39 @@ class _DownloadScreenState extends ConsumerState<DownloadScreen> {
     });
   }
 
+  void _navigateToHome() {
+    if (!mounted || _isNavigatingToHome) {
+      return;
+    }
+
+    _isNavigatingToHome = true;
+    AppLogger.info(_tag, 'Navigazione alla home dopo download completato');
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      context.go(AppRoutes.home);
+    });
+  }
+
   /// Avvia il processo di verifica e download
   Future<void> _startDownloads() async {
     AppLogger.info(_tag, 'Avvio processo download...');
     final notifier = ref.read(downloadStateProvider.notifier);
+    await ref.read(appSettingsProvider.notifier).load();
+    final settings = ref.read(appSettingsProvider);
 
     // Verifica stato iniziale (spazio disco, modelli gia' presenti)
-    await notifier.checkInitialState();
+    await notifier.checkInitialState(
+      whisperModelId: settings.selectedWhisperModelId,
+    );
 
     // Se tutti i modelli sono pronti, vai alla home
     final state = ref.read(downloadStateProvider);
     if (state.allCompleted) {
       AppLogger.info(_tag, 'Tutti i modelli pronti, navigazione alla home');
-      if (mounted) {
-        context.go(AppRoutes.home);
-      }
+      _navigateToHome();
       return;
     }
 
@@ -67,12 +88,18 @@ class _DownloadScreenState extends ConsumerState<DownloadScreen> {
     final finalState = ref.read(downloadStateProvider);
     if (finalState.allCompleted && mounted) {
       AppLogger.info(_tag, 'Download completati, navigazione alla home');
-      context.go(AppRoutes.home);
+      _navigateToHome();
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AllDownloadsState>(downloadStateProvider, (previous, next) {
+      if (!(previous?.allCompleted ?? false) && next.allCompleted) {
+        _navigateToHome();
+      }
+    });
+
     final downloadState = ref.watch(downloadStateProvider);
     final theme = Theme.of(context);
 

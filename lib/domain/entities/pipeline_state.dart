@@ -3,6 +3,8 @@
 /// Pipeline semplificata: registrazione -> trascrizione -> traduzione (no correzione).
 library;
 
+const Object _pipelineStateUnset = Object();
+
 // ============================================================
 // MODALITÀ DELL'APP
 // ============================================================
@@ -137,22 +139,28 @@ class PipelineState {
     AppMode? mode,
     PipelinePhase? phase,
     List<TranslatedSegment>? segments,
-    String? currentTranscription,
-    String? currentTranslation,
-    String? detectedLanguage,
-    String? errorMessage,
+    Object? currentTranscription = _pipelineStateUnset,
+    Object? currentTranslation = _pipelineStateUnset,
+    Object? detectedLanguage = _pipelineStateUnset,
+    Object? errorMessage = _pipelineStateUnset,
     bool? isStreaming,
   }) =>
       PipelineState(
         mode: mode ?? this.mode,
         phase: phase ?? this.phase,
         segments: segments ?? this.segments,
-        currentTranscription:
-            currentTranscription ?? this.currentTranscription,
-        currentTranslation:
-            currentTranslation ?? this.currentTranslation,
-        detectedLanguage: detectedLanguage ?? this.detectedLanguage,
-        errorMessage: errorMessage ?? this.errorMessage,
+        currentTranscription: identical(currentTranscription, _pipelineStateUnset)
+            ? this.currentTranscription
+            : currentTranscription as String?,
+        currentTranslation: identical(currentTranslation, _pipelineStateUnset)
+            ? this.currentTranslation
+            : currentTranslation as String?,
+        detectedLanguage: identical(detectedLanguage, _pipelineStateUnset)
+            ? this.detectedLanguage
+            : detectedLanguage as String?,
+        errorMessage: identical(errorMessage, _pipelineStateUnset)
+            ? this.errorMessage
+            : errorMessage as String?,
         isStreaming: isStreaming ?? this.isStreaming,
       );
 

@@ -17,11 +17,30 @@ const String _boxName = 'translation_history';
 class HistoryRepository {
   /// Box Hive per la persistenza
   Box? _box;
+  Future<void>? _initFuture;
 
   /// Inizializza il repository aprendo il box Hive
   Future<void> init() async {
+    if (_box != null && _box!.isOpen) {
+      return;
+    }
+
+    if (Hive.isBoxOpen(_boxName)) {
+      _box = Hive.box(_boxName);
+      return;
+    }
+
+    if (_initFuture != null) {
+      await _initFuture;
+      return;
+    }
+
     AppLogger.info(_tag, 'Inizializzazione HistoryRepository...');
-    _box = await Hive.openBox(_boxName);
+    _initFuture = Hive.openBox(_boxName).then((box) {
+      _box = box;
+    });
+    await _initFuture;
+    _initFuture = null;
     AppLogger.info(_tag,
         'HistoryRepository inizializzato. Voci presenti: ${_box!.length}');
   }
@@ -52,7 +71,7 @@ class HistoryRepository {
   /// Aggiunge una nuova voce alla cronologia
   /// Se ci sono piu' di kMaxHistoryEntries voci, rimuove la piu' vecchia
   Future<void> add(TranslationEntry entry) async {
-    _ensureInit();
+    await init();
     AppLogger.info(_tag, 'Aggiunta voce cronologia: ${entry.id}');
 
     // Aggiungi la nuova voce
@@ -76,7 +95,7 @@ class HistoryRepository {
 
   /// Elimina una voce dalla cronologia per ID
   Future<void> deleteById(String id) async {
-    _ensureInit();
+    await init();
     AppLogger.info(_tag, 'Eliminazione voce: $id');
 
     for (var i = 0; i < _box!.length; i++) {
@@ -99,7 +118,7 @@ class HistoryRepository {
 
   /// Elimina tutta la cronologia
   Future<void> deleteAll() async {
-    _ensureInit();
+    await init();
     AppLogger.info(_tag, 'Eliminazione di tutta la cronologia');
     await _box!.clear();
     AppLogger.info(_tag, 'Cronologia eliminata');
@@ -107,6 +126,10 @@ class HistoryRepository {
 
   /// Verifica che il box sia inizializzato
   void _ensureInit() {
+    if ((_box == null || !_box!.isOpen) && Hive.isBoxOpen(_boxName)) {
+      _box = Hive.box(_boxName);
+    }
+
     if (_box == null || !_box!.isOpen) {
       throw StateError(
           'HistoryRepository non inizializzato. Chiama init() prima.');

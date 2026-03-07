@@ -26,32 +26,46 @@ final downloadStateProvider =
 class DownloadStateNotifier extends StateNotifier<AllDownloadsState> {
   final DownloadService _downloadService;
 
+  /// Lista corrente di modelli da gestire (dipende dal modello Whisper scelto)
+  List<ModelFileConfig> _requiredModels = kModelFiles;
+
   DownloadStateNotifier(this._downloadService)
       : super(const AllDownloadsState()) {
-    _initModelStates();
+    _initModelStates(_requiredModels);
   }
 
   /// Inizializza gli stati per ogni modello
-  void _initModelStates() {
-    AppLogger.info(_tag, 'Inizializzazione stati download per ${kModelFiles.length} modelli');
-    final models = <ModelDownloadState>[];
-    for (var i = 0; i < kModelFiles.length; i++) {
-      models.add(ModelDownloadState(
+  void _initModelStates(List<ModelFileConfig> models) {
+    AppLogger.info(_tag, 'Inizializzazione stati download per ${models.length} modelli');
+    final modelStates = <ModelDownloadState>[];
+    for (var i = 0; i < models.length; i++) {
+      modelStates.add(ModelDownloadState(
         modelIndex: i,
-        displayName: kModelFiles[i].displayName,
-        totalBytes: kModelFiles[i].expectedSizeBytes,
+        displayName: models[i].displayName,
+        totalBytes: models[i].expectedSizeBytes,
       ));
     }
-    state = state.copyWith(models: models);
+    state = state.copyWith(
+      models: modelStates,
+      allCompleted: false,
+      globalError: null,
+    );
   }
 
   /// Verifica lo spazio disponibile e lo stato dei modelli
-  Future<void> checkInitialState() async {
+  Future<void> checkInitialState({String whisperModelId = kDefaultWhisperModelId}) async {
     AppLogger.info(_tag, 'Verifica stato iniziale download...');
+
+    // Aggiorna la lista dei modelli richiesti in base al modello Whisper scelto
+    _requiredModels = getRequiredModelFiles(whisperModelId: whisperModelId);
+    _initModelStates(_requiredModels);
 
     // Verifica spazio su disco
     final availableSpace = await _downloadService.getAvailableDiskSpace();
-    state = state.copyWith(availableDiskSpace: availableSpace);
+    state = state.copyWith(
+      availableDiskSpace: availableSpace,
+      globalError: null,
+    );
 
     if (availableSpace < kMinDiskSpaceBytes) {
       state = state.copyWith(
@@ -67,13 +81,13 @@ class DownloadStateNotifier extends StateNotifier<AllDownloadsState> {
     final updatedModels = <ModelDownloadState>[];
     bool allCompleted = true;
 
-    for (var i = 0; i < kModelFiles.length; i++) {
+    for (var i = 0; i < _requiredModels.length; i++) {
       final isDownloaded =
-          await _downloadService.isModelDownloaded(kModelFiles[i]);
+          await _downloadService.isModelDownloaded(_requiredModels[i]);
       if (isDownloaded) {
         updatedModels.add(state.models[i].copyWith(
           status: DownloadStatus.completed,
-          downloadedBytes: kModelFiles[i].expectedSizeBytes,
+          downloadedBytes: _requiredModels[i].expectedSizeBytes,
         ));
       } else {
         allCompleted = false;
@@ -87,7 +101,7 @@ class DownloadStateNotifier extends StateNotifier<AllDownloadsState> {
     );
 
     AppLogger.info(_tag,
-        'Stato iniziale: ${state.completedCount}/${kModelFiles.length} modelli pronti');
+        'Stato iniziale: ${state.completedCount}/${_requiredModels.length} modelli pronti');
   }
 
   /// Avvia il download di tutti i modelli mancanti
@@ -100,7 +114,7 @@ class DownloadStateNotifier extends StateNotifier<AllDownloadsState> {
       return;
     }
 
-    for (var i = 0; i < kModelFiles.length; i++) {
+    for (var i = 0; i < _requiredModels.length; i++) {
       if (state.models[i].status == DownloadStatus.completed) {
         AppLogger.debug(_tag, 'Modello $i gia\' scaricato, salto');
         continue;
@@ -120,7 +134,7 @@ class DownloadStateNotifier extends StateNotifier<AllDownloadsState> {
 
   /// Scarica un singolo modello
   Future<void> _downloadSingleModel(int index) async {
-    final config = kModelFiles[index];
+    final config = _requiredModels[index];
     AppLogger.info(_tag, 'Download modello $index: ${config.displayName}');
 
     try {
@@ -177,13 +191,40 @@ class DownloadStateNotifier extends StateNotifier<AllDownloadsState> {
   /// Ri-scarica un modello specifico (eliminandolo prima)
   Future<void> redownloadModel(int index) async {
     AppLogger.info(_tag, 'Ri-scaricamento modello $index');
-    await _downloadService.deleteModel(kModelFiles[index]);
+    await _downloadService.deleteModel(_requiredModels[index]);
     _updateModelState(index, (current) => ModelDownloadState(
       modelIndex: index,
-      displayName: kModelFiles[index].displayName,
-      totalBytes: kModelFiles[index].expectedSizeBytes,
+      displayName: _requiredModels[index].displayName,
+      totalBytes: _requiredModels[index].expectedSizeBytes,
     ));
     await _downloadSingleModel(index);
+  }
+
+  Future<void> redownloadByConfig(ModelFileConfig config) async {
+    final trackedIndex = _requiredModels.indexWhere(
+      (model) =>
+          model.fileName == config.fileName &&
+          model.subFolder == config.subFolder,
+    );
+
+    if (trackedIndex != -1) {
+      await redownloadModel(trackedIndex);
+      return;
+    }
+
+    final transientIndex = -DateTime.now().microsecondsSinceEpoch;
+    await _downloadService.deleteModel(config);
+    await _downloadService.downloadModel(
+      modelIndex: transientIndex,
+      config: config,
+      onProgress: (
+        modelIndex,
+        downloadedBytes,
+        totalBytes,
+        speedBytesPerSec,
+      ) {},
+      onStatus: (modelIndex, status, errorMessage) {},
+    );
   }
 
   /// Aggiorna lo stato di un singolo modello
@@ -192,7 +233,12 @@ class DownloadStateNotifier extends StateNotifier<AllDownloadsState> {
     final updatedModels = List<ModelDownloadState>.from(state.models);
     if (index < updatedModels.length) {
       updatedModels[index] = updater(updatedModels[index]);
-      state = state.copyWith(models: updatedModels);
+      final allCompleted = updatedModels.isNotEmpty &&
+          updatedModels.every((model) => model.status == DownloadStatus.completed);
+      state = state.copyWith(
+        models: updatedModels,
+        allCompleted: allCompleted,
+      );
     }
   }
 }

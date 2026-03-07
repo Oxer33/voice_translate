@@ -4,6 +4,7 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:voice_translate/core/utils/logger.dart';
@@ -25,6 +26,9 @@ class TtsService {
   /// Completer per attendere la fine della riproduzione
   Completer<void>? _speakCompleter;
 
+  final Queue<String> _speechQueue = Queue<String>();
+  bool _isQueueProcessing = false;
+
   /// Callback quando il TTS finisce di parlare
   void Function()? onComplete;
 
@@ -36,8 +40,11 @@ class TtsService {
   }) async {
     AppLogger.info(_tag, 'Inizializzazione TTS...');
 
-    // Imposta il motore TTS di default
-    await _tts.setEngine('com.google.android.tts');
+    try {
+      await _tts.setEngine('com.google.android.tts');
+    } catch (e) {
+      AppLogger.warning(_tag, 'Motore Google TTS non disponibile, uso il motore di default: $e');
+    }
 
     // Imposta la lingua (converte codice NLLB in BCP-47)
     final bcp47 = _nllbToBcp47(languageCode);
@@ -59,7 +66,7 @@ class TtsService {
     _tts.setCompletionHandler(() {
       AppLogger.debug(_tag, 'TTS completato');
       _isSpeaking = false;
-      _speakCompleter?.complete();
+      _completeSpeakCompleter();
       _speakCompleter = null;
       onComplete?.call();
     });
@@ -68,7 +75,7 @@ class TtsService {
     _tts.setErrorHandler((msg) {
       AppLogger.error(_tag, 'Errore TTS: $msg');
       _isSpeaking = false;
-      _speakCompleter?.completeError(Exception('Errore TTS: $msg'));
+      _completeSpeakCompleter(Exception('Errore TTS: $msg'));
       _speakCompleter = null;
     });
 
@@ -108,33 +115,71 @@ class TtsService {
       await init(languageCode: 'eng_Latn');
     }
 
-    if (text.trim().isEmpty) return;
+    final normalizedText = text.trim();
+    if (normalizedText.isEmpty) return;
 
-    if (_isSpeaking) {
-      await stop();
+    _speechQueue.add(normalizedText);
+    if (_isQueueProcessing) {
+      return;
     }
 
-    _isSpeaking = true;
-    _speakCompleter = Completer<void>();
-    await _tts.speak(text);
+    await _drainSpeechQueue();
   }
 
   /// Ferma la riproduzione in corso
   Future<void> stop() async {
+    _speechQueue.clear();
+
     if (_isSpeaking) {
       await _tts.stop();
       _isSpeaking = false;
-      _speakCompleter?.complete();
+      _completeSpeakCompleter();
       _speakCompleter = null;
       AppLogger.debug(_tag, 'TTS fermato');
     }
+  }
+
+  Future<void> _drainSpeechQueue() async {
+    if (_isQueueProcessing) {
+      return;
+    }
+
+    _isQueueProcessing = true;
+    try {
+      while (_speechQueue.isNotEmpty) {
+        final nextText = _speechQueue.removeFirst();
+        await speak(nextText);
+      }
+    } finally {
+      _isQueueProcessing = false;
+    }
+  }
+
+  void _completeSpeakCompleter([Object? error]) {
+    final completer = _speakCompleter;
+    if (completer == null || completer.isCompleted) {
+      return;
+    }
+
+    if (error != null) {
+      completer.completeError(error);
+      return;
+    }
+
+    completer.complete();
   }
 
   /// Cambia la lingua del TTS
   Future<void> setLanguage(String nllbLanguageCode) async {
     final bcp47 = _nllbToBcp47(nllbLanguageCode);
     final result = await _tts.setLanguage(bcp47);
-    AppLogger.info(_tag, 'Lingua TTS cambiata: $bcp47 (result: $result)');
+    if (result == 1) {
+      AppLogger.info(_tag, 'Lingua TTS cambiata: $bcp47 (result: $result)');
+      return;
+    }
+
+    AppLogger.warning(_tag, 'Lingua TTS $bcp47 non disponibile, fallback a en-US');
+    await _tts.setLanguage('en-US');
   }
 
   /// Cambia la velocità del TTS

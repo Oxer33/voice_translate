@@ -12,41 +12,32 @@ import 'package:voice_translate/core/utils/logger.dart';
 /// Tag per i log di questo modulo
 const String _tag = 'WhisperFFI';
 
-// --- Typedef per le funzioni C di whisper.cpp ---
-
-/// whisper_init_from_file(const char * path) -> struct whisper_context *
-typedef WhisperInitFromFileC = Pointer<Void> Function(Pointer<Utf8> path);
-typedef WhisperInitFromFileDart = Pointer<Void> Function(Pointer<Utf8> path);
-
-/// whisper_free(struct whisper_context * ctx)
-typedef WhisperFreeC = Void Function(Pointer<Void> ctx);
-typedef WhisperFreeDart = void Function(Pointer<Void> ctx);
-
-/// whisper_full(struct whisper_context * ctx, struct whisper_full_params params, const float * samples, int n_samples) -> int
-typedef WhisperFullC = Int32 Function(
-    Pointer<Void> ctx, Pointer<Void> params, Pointer<Float> samples, Int32 nSamples);
-typedef WhisperFullDart = int Function(
-    Pointer<Void> ctx, Pointer<Void> params, Pointer<Float> samples, int nSamples);
-
-/// whisper_full_default_params(enum whisper_sampling_strategy strategy) -> struct whisper_full_params
-typedef WhisperFullDefaultParamsC = Pointer<Void> Function(Int32 strategy);
-typedef WhisperFullDefaultParamsDart = Pointer<Void> Function(int strategy);
-
-/// whisper_full_n_segments(struct whisper_context * ctx) -> int
-typedef WhisperFullNSegmentsC = Int32 Function(Pointer<Void> ctx);
-typedef WhisperFullNSegmentsDart = int Function(Pointer<Void> ctx);
-
-/// whisper_full_get_segment_text(struct whisper_context * ctx, int i_segment) -> const char *
-typedef WhisperFullGetSegmentTextC = Pointer<Utf8> Function(Pointer<Void> ctx, Int32 iSegment);
-typedef WhisperFullGetSegmentTextDart = Pointer<Utf8> Function(Pointer<Void> ctx, int iSegment);
-
-/// whisper_full_lang_id(struct whisper_context * ctx) -> int
-typedef WhisperFullLangIdC = Int32 Function(Pointer<Void> ctx);
-typedef WhisperFullLangIdDart = int Function(Pointer<Void> ctx);
-
-/// whisper_lang_str(int id) -> const char *
-typedef WhisperLangStrC = Pointer<Utf8> Function(Int32 id);
-typedef WhisperLangStrDart = Pointer<Utf8> Function(int id);
+typedef VoiceTranslateWhisperTranscribeC = Int32 Function(
+  Pointer<Utf8> modelPath,
+  Pointer<Float> samples,
+  Int32 nSamples,
+  Pointer<Utf8> language,
+  Pointer<Uint8> outputText,
+  Int32 outputTextCapacity,
+  Pointer<Uint8> detectedLanguage,
+  Int32 detectedLanguageCapacity,
+);
+typedef VoiceTranslateWhisperTranscribeDart = int Function(
+  Pointer<Utf8> modelPath,
+  Pointer<Float> samples,
+  int nSamples,
+  Pointer<Utf8> language,
+  Pointer<Uint8> outputText,
+  int outputTextCapacity,
+  Pointer<Uint8> detectedLanguage,
+  int detectedLanguageCapacity,
+);
+typedef VoiceTranslateWhisperValidateModelC = Int32 Function(
+  Pointer<Utf8> modelPath,
+);
+typedef VoiceTranslateWhisperValidateModelDart = int Function(
+  Pointer<Utf8> modelPath,
+);
 
 /// Risultato della trascrizione Whisper
 class WhisperResult {
@@ -84,58 +75,66 @@ class _WhisperIsolateData {
   });
 }
 
-/// Classe wrapper per i binding FFI di whisper.cpp
+/// Dati per l'Isolate di validazione modello
+class _WhisperValidateData {
+  final String libraryPath;
+  final String modelPath;
+  const _WhisperValidateData({required this.libraryPath, required this.modelPath});
+}
+
 class WhisperFFI {
-  /// Libreria nativa caricata
-  DynamicLibrary? _lib;
-
-  /// Contesto whisper attivo
-  Pointer<Void>? _ctx;
-
-  /// Percorso alla libreria .so
-  final String _libraryPath;
-
-  /// Percorso al file modello
-  final String _modelPath;
-
-  WhisperFFI({
+  /// Valida il modello Whisper in modo SINCRONO (blocca il thread chiamante).
+  /// ATTENZIONE: NON usare sul main thread, carica il modello in memoria.
+  /// Usare validateModelInIsolate per non bloccare la UI.
+  static String? validateModel({
     required String libraryPath,
     required String modelPath,
-  })  : _libraryPath = libraryPath,
-        _modelPath = modelPath;
+  }) {
+    final lib = DynamicLibrary.open(libraryPath);
+    final validateFn = lib.lookupFunction<
+        VoiceTranslateWhisperValidateModelC,
+        VoiceTranslateWhisperValidateModelDart>(
+      'voice_translate_whisper_validate_model',
+    );
 
-  /// Carica la libreria nativa e inizializza il modello
-  void load() {
-    AppLogger.info(_tag, 'Caricamento libreria whisper: $_libraryPath');
-    _lib = DynamicLibrary.open(_libraryPath);
-
-    AppLogger.info(_tag, 'Inizializzazione modello: $_modelPath');
-    final initFn = _lib!.lookupFunction<WhisperInitFromFileC, WhisperInitFromFileDart>(
-        'whisper_init_from_file');
-
-    final pathPtr = _modelPath.toNativeUtf8();
-    _ctx = initFn(pathPtr);
-    calloc.free(pathPtr);
-
-    if (_ctx == null || _ctx == nullptr) {
-      throw Exception('Impossibile caricare il modello Whisper da $_modelPath');
-    }
-    AppLogger.info(_tag, 'Modello Whisper caricato con successo');
-  }
-
-  /// Libera le risorse native
-  void dispose() {
-    if (_ctx != null && _ctx != nullptr && _lib != null) {
-      AppLogger.info(_tag, 'Rilascio risorse Whisper...');
-      final freeFn =
-          _lib!.lookupFunction<WhisperFreeC, WhisperFreeDart>('whisper_free');
-      freeFn(_ctx!);
-      _ctx = null;
-      AppLogger.info(_tag, 'Risorse Whisper rilasciate');
+    final modelPathPtr = modelPath.toNativeUtf8();
+    try {
+      final result = validateFn(modelPathPtr);
+      if (result == 0) {
+        return null;
+      }
+      return 'Il modello Whisper selezionato non e\' caricabile (codice $result).';
+    } catch (e) {
+      return 'Verifica modello Whisper fallita: $e';
+    } finally {
+      calloc.free(modelPathPtr);
     }
   }
 
-  /// Esegue la trascrizione in un Isolate separato per non bloccare l'UI
+  /// Valida il modello Whisper in un Isolate separato.
+  /// Non blocca il main thread e pre-carica il modello nella cache nativa.
+  static Future<String?> validateModelInIsolate({
+    required String libraryPath,
+    required String modelPath,
+  }) async {
+    AppLogger.info(_tag, 'Validazione modello Whisper in Isolate separato...');
+    final data = _WhisperValidateData(libraryPath: libraryPath, modelPath: modelPath);
+    try {
+      return await Isolate.run(() => _validateWorker(data));
+    } catch (e) {
+      AppLogger.error(_tag, 'Errore validazione modello in Isolate', e);
+      return 'Verifica modello Whisper fallita: $e';
+    }
+  }
+
+  /// Worker function per la validazione del modello nell'Isolate
+  static String? _validateWorker(_WhisperValidateData data) {
+    return validateModel(
+      libraryPath: data.libraryPath,
+      modelPath: data.modelPath,
+    );
+  }
+
   static Future<WhisperResult> transcribeInIsolate({
     required String libraryPath,
     required String modelPath,
@@ -159,82 +158,61 @@ class WhisperFFI {
 
   /// Worker function che gira nell'Isolate
   static WhisperResult _transcribeWorker(_WhisperIsolateData data) {
-    // Carica la libreria nativa nell'Isolate
     final lib = DynamicLibrary.open(data.libraryPath);
+    final transcribeFn = lib.lookupFunction<
+        VoiceTranslateWhisperTranscribeC,
+        VoiceTranslateWhisperTranscribeDart>(
+      'voice_translate_whisper_transcribe',
+    );
 
-    // Inizializza il modello
-    final initFn = lib.lookupFunction<WhisperInitFromFileC, WhisperInitFromFileDart>(
-        'whisper_init_from_file');
     final modelPathPtr = data.modelPath.toNativeUtf8();
-    final ctx = initFn(modelPathPtr);
-    calloc.free(modelPathPtr);
-
-    if (ctx == nullptr) {
-      throw Exception('Impossibile caricare Whisper nel worker Isolate');
-    }
+    final samplesPtr = calloc<Float>(data.audioSamples.length);
+    const outputTextCapacity = 16384;
+    const detectedLanguageCapacity = 32;
+    final outputTextPtr = calloc<Uint8>(outputTextCapacity);
+    final detectedLanguagePtr = calloc<Uint8>(detectedLanguageCapacity);
+    final languagePtr = data.languageCode == null || data.languageCode!.isEmpty
+        ? nullptr.cast<Utf8>()
+        : data.languageCode!.toNativeUtf8();
 
     try {
-      // Prepara i parametri di default (WHISPER_SAMPLING_GREEDY = 0)
-      final defaultParamsFn =
-          lib.lookupFunction<WhisperFullDefaultParamsC, WhisperFullDefaultParamsDart>(
-              'whisper_full_default_params');
-      final params = defaultParamsFn(0);
-
-      // Alloca i campioni audio in memoria nativa
-      final samplesPtr = calloc<Float>(data.audioSamples.length);
       for (var i = 0; i < data.audioSamples.length; i++) {
         samplesPtr[i] = data.audioSamples[i];
       }
 
-      // Esegue la trascrizione
-      final fullFn = lib.lookupFunction<WhisperFullC, WhisperFullDart>('whisper_full');
-      final result = fullFn(ctx, params, samplesPtr, data.audioSamples.length);
-
-      calloc.free(samplesPtr);
+      final result = transcribeFn(
+        modelPathPtr,
+        samplesPtr,
+        data.audioSamples.length,
+        languagePtr,
+        outputTextPtr,
+        outputTextCapacity,
+        detectedLanguagePtr,
+        detectedLanguageCapacity,
+      );
 
       if (result != 0) {
-        throw Exception('whisper_full ha restituito errore: $result');
+        throw Exception(
+          'voice_translate_whisper_transcribe ha restituito errore: $result',
+        );
       }
 
-      // Legge i segmenti trascritti
-      final nSegmentsFn =
-          lib.lookupFunction<WhisperFullNSegmentsC, WhisperFullNSegmentsDart>(
-              'whisper_full_n_segments');
-      final getTextFn =
-          lib.lookupFunction<WhisperFullGetSegmentTextC, WhisperFullGetSegmentTextDart>(
-              'whisper_full_get_segment_text');
-
-      final nSegments = nSegmentsFn(ctx);
-      final buffer = StringBuffer();
-
-      for (var i = 0; i < nSegments; i++) {
-        final textPtr = getTextFn(ctx, i);
-        if (textPtr != nullptr) {
-          buffer.write(textPtr.toDartString());
-        }
-      }
-
-      // Rileva la lingua
-      final langIdFn =
-          lib.lookupFunction<WhisperFullLangIdC, WhisperFullLangIdDart>(
-              'whisper_full_lang_id');
-      final langStrFn =
-          lib.lookupFunction<WhisperLangStrC, WhisperLangStrDart>(
-              'whisper_lang_str');
-
-      final langId = langIdFn(ctx);
-      final langPtr = langStrFn(langId);
-      final detectedLang = langPtr != nullptr ? langPtr.toDartString() : 'unknown';
+      final text = outputTextPtr.cast<Utf8>().toDartString().trim();
+      final detectedLang =
+          detectedLanguagePtr.cast<Utf8>().toDartString().trim();
 
       return WhisperResult(
-        text: buffer.toString().trim(),
-        detectedLanguage: detectedLang,
+        text: text,
+        detectedLanguage: detectedLang.isEmpty ? 'unknown' : detectedLang,
       );
     } finally {
-      // Libera il contesto whisper
-      final freeFn =
-          lib.lookupFunction<WhisperFreeC, WhisperFreeDart>('whisper_free');
-      freeFn(ctx);
+      calloc.free(modelPathPtr);
+      calloc.free(samplesPtr);
+      calloc.free(outputTextPtr);
+      calloc.free(detectedLanguagePtr);
+      if (languagePtr != nullptr) {
+        calloc.free(languagePtr);
+      }
     }
   }
 }
