@@ -97,7 +97,7 @@ class WhisperFFI {
       'voice_translate_whisper_validate_model',
     );
 
-    final modelPathPtr = modelPath.toNativeUtf8();
+    final modelPathPtr = modelPath.toNativeUtf8(allocator: calloc);
     try {
       final result = validateFn(modelPathPtr);
       if (result == 0) {
@@ -165,7 +165,7 @@ class WhisperFFI {
       'voice_translate_whisper_transcribe',
     );
 
-    final modelPathPtr = data.modelPath.toNativeUtf8();
+    final modelPathPtr = data.modelPath.toNativeUtf8(allocator: calloc);
     final samplesPtr = calloc<Float>(data.audioSamples.length);
     const outputTextCapacity = 16384;
     const detectedLanguageCapacity = 32;
@@ -173,7 +173,7 @@ class WhisperFFI {
     final detectedLanguagePtr = calloc<Uint8>(detectedLanguageCapacity);
     final languagePtr = data.languageCode == null || data.languageCode!.isEmpty
         ? nullptr.cast<Utf8>()
-        : data.languageCode!.toNativeUtf8();
+        : data.languageCode!.toNativeUtf8(allocator: calloc);
 
     try {
       for (var i = 0; i < data.audioSamples.length; i++) {

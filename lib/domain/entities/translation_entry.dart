@@ -54,14 +54,14 @@ class TranslationEntry {
   /// Crea un'istanza da Map (deserializzazione Hive)
   factory TranslationEntry.fromMap(Map<dynamic, dynamic> map) =>
       TranslationEntry(
-        id: map['id'] as String,
-        timestamp: DateTime.parse(map['timestamp'] as String),
-        sourceLanguageCode: map['sourceLanguageCode'] as String,
-        targetLanguageCode: map['targetLanguageCode'] as String,
-        sourceLanguageName: map['sourceLanguageName'] as String,
-        targetLanguageName: map['targetLanguageName'] as String,
-        rawText: map['rawText'] as String,
-        translatedText: map['translatedText'] as String,
+        id: (map['id'] as String?) ?? '',
+        timestamp: DateTime.tryParse((map['timestamp'] as String?) ?? '') ?? DateTime.now(),
+        sourceLanguageCode: (map['sourceLanguageCode'] as String?) ?? '',
+        targetLanguageCode: (map['targetLanguageCode'] as String?) ?? '',
+        sourceLanguageName: (map['sourceLanguageName'] as String?) ?? '',
+        targetLanguageName: (map['targetLanguageName'] as String?) ?? '',
+        rawText: (map['rawText'] as String?) ?? '',
+        translatedText: (map['translatedText'] as String?) ?? '',
       );
 
   @override

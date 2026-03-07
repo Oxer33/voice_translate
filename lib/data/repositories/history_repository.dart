@@ -46,8 +46,8 @@ class HistoryRepository {
   }
 
   /// Ottiene tutte le voci della cronologia ordinate per data (piu' recente prima)
-  List<TranslationEntry> getAll() {
-    _ensureInit();
+  Future<List<TranslationEntry>> getAll() async {
+    await init();
     AppLogger.debug(_tag, 'Lettura cronologia: ${_box!.length} voci');
 
     final entries = <TranslationEntry>[];
@@ -80,7 +80,7 @@ class HistoryRepository {
     // Rimuovi le voci in eccesso (mantieni solo le ultime kMaxHistoryEntries)
     while (_box!.length > kMaxHistoryEntries) {
       // Trova la voce piu' vecchia e rimuovila
-      final entries = getAll();
+      final entries = await getAll();
       if (entries.length > kMaxHistoryEntries) {
         final oldest = entries.last;
         await deleteById(oldest.id);
@@ -122,18 +122,6 @@ class HistoryRepository {
     AppLogger.info(_tag, 'Eliminazione di tutta la cronologia');
     await _box!.clear();
     AppLogger.info(_tag, 'Cronologia eliminata');
-  }
-
-  /// Verifica che il box sia inizializzato
-  void _ensureInit() {
-    if ((_box == null || !_box!.isOpen) && Hive.isBoxOpen(_boxName)) {
-      _box = Hive.box(_boxName);
-    }
-
-    if (_box == null || !_box!.isOpen) {
-      throw StateError(
-          'HistoryRepository non inizializzato. Chiama init() prima.');
-    }
   }
 
   /// Rilascia le risorse

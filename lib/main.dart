@@ -1,5 +1,6 @@
 // Entry point dell'applicazione VoiceTranslate.
 // Inizializza Hive, logger e avvia l'app con Riverpod.
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,8 +16,11 @@ void main() async {
   // Assicura che i binding Flutter siano inizializzati
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Inizializza il logger
-  AppLogger.init(enabled: true, minLevel: LogLevel.debug);
+  // Inizializza il logger (disabilitato in release per privacy)
+  AppLogger.init(
+    enabled: !kReleaseMode,
+    minLevel: kReleaseMode ? LogLevel.error : LogLevel.debug,
+  );
   AppLogger.info(_tag, 'Avvio VoiceTranslate...');
 
   // Inizializza Hive per la persistenza locale

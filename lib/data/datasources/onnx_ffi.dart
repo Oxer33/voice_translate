@@ -29,7 +29,7 @@ class OnnxFFI {
     AppLogger.info(_tag, 'Avvio traduzione NLLB via backend Android...');
     AppLogger.debug(_tag,
         'Traduzione: $sourceLanguageCode -> $targetLanguageCode');
-    AppLogger.debug(_tag, 'Testo: $inputText');
+    AppLogger.debug(_tag, 'Testo: (${inputText.length} caratteri)');
 
     final result = await NllbPlatformChannel.translate(
       modelDir: modelDir,
@@ -38,7 +38,7 @@ class OnnxFFI {
       targetLanguageCode: targetLanguageCode,
     );
 
-    AppLogger.info(_tag, 'Traduzione completata: $result');
+    AppLogger.info(_tag, 'Traduzione completata (${result.length} caratteri)');
     return result;
   }
 }

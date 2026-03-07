@@ -28,8 +28,7 @@ class HistoryListNotifier extends StateNotifier<List<TranslationEntry>> {
   Future<void> load() async {
     AppLogger.info(_tag, 'Caricamento cronologia...');
     try {
-      await _repo.init();
-      state = _repo.getAll();
+      state = await _repo.getAll();
       AppLogger.info(_tag, 'Cronologia caricata: ${state.length} voci');
     } catch (e) {
       AppLogger.error(_tag, 'Errore caricamento cronologia', e);
@@ -37,10 +36,10 @@ class HistoryListNotifier extends StateNotifier<List<TranslationEntry>> {
   }
 
   /// Aggiorna la lista dalla fonte dati
-  void refresh() {
+  Future<void> refresh() async {
     AppLogger.debug(_tag, 'Refresh cronologia');
     try {
-      state = _repo.getAll();
+      state = await _repo.getAll();
     } catch (e) {
       AppLogger.error(_tag, 'Errore refresh cronologia', e);
     }
@@ -51,7 +50,7 @@ class HistoryListNotifier extends StateNotifier<List<TranslationEntry>> {
     AppLogger.info(_tag, 'Eliminazione voce: $id');
     try {
       await _repo.deleteById(id);
-      state = _repo.getAll();
+      state = await _repo.getAll();
       AppLogger.info(_tag, 'Voce eliminata, rimaste: ${state.length}');
     } catch (e) {
       AppLogger.error(_tag, 'Errore eliminazione voce', e);

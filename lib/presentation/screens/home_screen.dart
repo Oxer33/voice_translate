@@ -45,6 +45,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     ref.read(historyListProvider.notifier).load();
     await ref.read(appSettingsProvider.notifier).load();
 
+    if (!mounted) return;
+
     final settings = ref.read(appSettingsProvider);
     final pipeline = ref.read(pipelineStateProvider.notifier);
 

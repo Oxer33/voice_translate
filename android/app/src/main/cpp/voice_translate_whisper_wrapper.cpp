@@ -133,3 +133,12 @@ extern "C" int voice_translate_whisper_validate_model(const char * model_path) {
 
     return 0;
 }
+
+extern "C" void voice_translate_whisper_close() {
+    std::lock_guard<std::mutex> lock(g_whisper_mutex);
+    if (g_cached_ctx != nullptr) {
+        whisper_free(g_cached_ctx);
+        g_cached_ctx = nullptr;
+        g_cached_model_path.clear();
+    }
+}

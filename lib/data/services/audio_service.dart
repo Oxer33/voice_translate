@@ -250,6 +250,21 @@ class AudioService {
   // CONVERSIONE AUDIO
   // ============================================================
 
+  /// Cerca l'offset del sub-chunk "data" in un file WAV.
+  /// Non assume che sia sempre a 44 byte: cerca il marker 'data' nel header.
+  int _findWavDataOffset(Uint8List bytes) {
+    for (var i = 12; i < bytes.length - 8; i++) {
+      if (bytes[i] == 0x64 &&
+          bytes[i + 1] == 0x61 &&
+          bytes[i + 2] == 0x74 &&
+          bytes[i + 3] == 0x61) {
+        return i + 8;
+      }
+    }
+    AppLogger.warning(_tag, 'Marker "data" non trovato nel WAV, uso offset 44');
+    return 44;
+  }
+
   /// Converte byte PCM 16-bit signed little-endian in campioni float32.
   /// Input: byte grezzi PCM 16kHz mono 16-bit.
   /// Output: `List<double>` con valori in `[-1.0, 1.0]`.
@@ -291,8 +306,8 @@ class AudioService {
           'File non e\' in formato WAV (magic RIFF mancante)');
     }
 
-    // I campioni audio iniziano dopo l'header di 44 bytes
-    const dataOffset = 44;
+    // Cerca il sub-chunk "data" nel WAV (l'offset non è sempre 44)
+    final dataOffset = _findWavDataOffset(bytes);
     final pcmBytes = Uint8List.sublistView(bytes, dataOffset);
 
     final samples = _pcm16ToFloat32(pcmBytes);

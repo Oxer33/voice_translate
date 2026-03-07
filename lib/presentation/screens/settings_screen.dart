@@ -334,7 +334,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildInfoRow(theme, 'Versione app', '2.0.0'),
+                    _buildInfoRow(theme, 'Versione app', '2.2.0'),
                     const Divider(height: 16),
                     _buildInfoRow(theme, 'Trascrizione',
                         fixedWhisperModel.displayName),

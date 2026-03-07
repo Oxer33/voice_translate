@@ -82,8 +82,11 @@ class _VoiceTranslateAppState extends ConsumerState<VoiceTranslateApp>
     return modelsReady.when(
       data: (ready) {
         AppLogger.debug(_tag, 'Modelli pronti: $ready');
-        // Crea il router SOLO la prima volta, poi riusa il cached
-        _cachedRouter ??= createAppRouter(modelsReady: ready);
+        // Se i modelli sono diventati pronti e il router puntava al download,
+        // ricrea il router per navigare alla home
+        if (_cachedRouter == null || ready) {
+          _cachedRouter = createAppRouter(modelsReady: ready);
+        }
         return _buildWithRouter();
       },
       loading: () {

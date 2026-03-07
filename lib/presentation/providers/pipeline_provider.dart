@@ -61,8 +61,10 @@ class PipelineNotifier extends StateNotifier<PipelineState> {
   /// Lingua sorgente selezionata
   SupportedLanguage _sourceLanguage = kAutoDetectLanguage;
 
-  /// Lingua target selezionata
-  SupportedLanguage _targetLanguage = kSupportedLanguages[1]; // Inglese
+  /// Lingua target selezionata (Inglese)
+  SupportedLanguage _targetLanguage = const SupportedLanguage(
+    nllbCode: 'eng_Latn', nameIt: 'Inglese', whisperCode: 'en',
+  );
 
   /// ID del modello Whisper selezionato
   String _selectedWhisperModelId = kDefaultWhisperModelId;
